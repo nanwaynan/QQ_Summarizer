@@ -25,8 +25,88 @@
 
 ---
 
+## 界面预览
+
+**主界面** —— 服务状态、时间段选择、实时进度
+
+![主界面](docs/screenshots/01-main.png)
+
+**总结结果** —— 归档为 Markdown，含表格、引用、图片说明
+
+![总结结果](docs/screenshots/08-result.png)
+
+<table>
+<tr>
+<td width="50%">
+
+**设置页** —— AI / 账号 / 群聊 / 存储
+![设置](docs/screenshots/02-settings.png)
+
+</td>
+<td width="50%">
+
+**自动任务** —— 定时 / 补跑 / 开机自启
+![自动任务](docs/screenshots/04-auto.png)
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**深色主题**
+![深色](docs/screenshots/07-main-dark.png)
+
+</td>
+<td width="50%">
+
+**使用帮助** —— 环境检测 + FAQ
+![帮助](docs/screenshots/06-help.png)
+
+</td>
+</tr>
+</table>
+
+<details>
+<summary>更多截图（日志页、存储设置、图片章节）</summary>
+
+<table>
+<tr>
+<td width="50%">
+
+**运行日志**
+![日志](docs/screenshots/05-logs.png)
+
+</td>
+<td width="50%">
+
+**存储与总结模式**
+![存储设置](docs/screenshots/03-settings-storage.png)
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**图片章节（AI 甄选 + 评分理由）**
+![图片章节](docs/screenshots/10-result-images.png)
+
+</td>
+<td width="50%">
+
+**话题详情**
+![话题](docs/screenshots/09-result-topics.png)
+
+</td>
+</tr>
+</table>
+
+</details>
+
+---
+
 ## 目录
 
+- [界面预览](#界面预览)
 - [一、项目简介](#一项目简介)
 - [二、30 秒快速上手](#二30-秒快速上手)
 - [三、各版本使用说明](#三各版本使用说明)
