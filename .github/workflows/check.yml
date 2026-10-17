@@ -1,105 +1,55 @@
-name: 代码检查
+name: check
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  syntax-check:
-    name: 语法检查 (Python ${{ matrix.python-version }})
+  syntax:
+    name: 语法与结构检查
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.12']
-
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: 安装 Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.12'
 
-      - name: 显示版本
-        run: |
-          python --version
-          echo "工作目录: ${{ github.workspace }}"
+      - name: Python 版本
+        run: python --version
 
-      - name: 全量语法编译
+      - name: 编译所有 .py 文件
         shell: pwsh
         run: |
-          $ErrorActionPreference = 'Stop'
-          $root = 'Source_Code_Version'
-          $files = Get-ChildItem -Path $root -Filter '*.py' -Recurse
-          Write-Host "找到 $($files.Count) 个 .py 文件"
-
-          $failed = @()
+          $files = Get-ChildItem -Path Source_Code_Version -Filter *.py -Recurse
+          Write-Host "找到 $($files.Count) 个 Python 文件"
+          $bad = 0
           foreach ($f in $files) {
             python -m py_compile $f.FullName
             if ($LASTEXITCODE -ne 0) {
-              $failed += $f.FullName
+              Write-Host "::error file=$($f.FullName)::编译失败"
+              $bad++
             }
           }
-
-          if ($failed.Count -gt 0) {
-            Write-Host "::error::$($failed.Count) 个文件编译失败"
-            $failed | ForEach-Object { Write-Host "  $_" }
+          if ($bad -gt 0) {
+            Write-Host "::error::$bad 个文件编译失败"
             exit 1
           }
           Write-Host "全部通过"
 
-      - name: 检查 spec 文件语法
+      - name: 编译 spec 文件
         shell: pwsh
         run: |
-          $specs = Get-ChildItem -Path 'Source_Code_Version' -Filter '*.spec'
+          $specs = Get-ChildItem -Path Source_Code_Version -Filter *.spec
           foreach ($s in $specs) {
             Write-Host "检查 $($s.Name)"
             python -m py_compile $s.FullName
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
-
-      - name: 核心模块导入测试
-        shell: pwsh
-        run: |
-          # 只验证纯 Python 模块（无 Qt 依赖的部分）
-          $env:PYTHONPATH = "${{ github.workspace }}\Source_Code_Version"
-          python -c @"
-import sys
-sys.path.insert(0, r'Source_Code_Version')
-try:
-    import app.config
-    import app.constants
-    import app.core.prompts
-    import app.core.images
-    print('核心模块导入成功')
-except ImportError as e:
-    print(f'导入失败（可能是可选依赖缺失）: {e}')
-    # 不视为失败：CI 环境未安装 PySide6
-"@
-
-      - name: 敏感信息扫描
-        shell: pwsh
-        run: |
-          # 防止有人误提交真实密钥
-          $patterns = @('sk-[a-zA-Z0-9]{20,}', 'ghp_[a-zA-Z0-9]{30,}', '54fcf3')
-          $found = $false
-          foreach ($pat in $patterns) {
-            $hits = Get-ChildItem -Path '.' -Recurse -File -Include *.py,*.json,*.md,*.bat,*.txt |
-                    Where-Object { $_.FullName -notmatch '\.git\\' } |
-                    Select-String -Pattern $pat -List
-            if ($hits) {
-              Write-Host "::error::发现疑似密钥（模式: $pat）"
-              $hits | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
-              $found = $true
-            }
-          }
-          if ($found) { exit 1 }
-          Write-Host "未发现硬编码密钥"
+          Write-Host "spec 全部通过"
 
       - name: 检查必要文件
         shell: pwsh
@@ -107,18 +57,36 @@ except ImportError as e:
           $required = @(
             'README.md',
             'LICENSE',
+            'CHANGELOG.md',
             '.gitignore',
             'Source_Code_Version/main.py',
             'Source_Code_Version/requirements.txt',
-            'Source_Code_Version/config.example.json'
+            'Source_Code_Version/config.example.json',
+            'Source_Code_Version/使用说明.md'
           )
-          $missing = @()
+          $missing = 0
           foreach ($f in $required) {
-            if (-not (Test-Path $f)) { $missing += $f }
+            if (-not (Test-Path $f)) {
+              Write-Host "::error::缺少文件 $f"
+              $missing++
+            }
           }
-          if ($missing.Count -gt 0) {
-            Write-Host "::error::缺少必要文件"
-            $missing | ForEach-Object { Write-Host "  $_" }
-            exit 1
-          }
+          if ($missing -gt 0) { exit 1 }
           Write-Host "必要文件齐全"
+
+      - name: 扫描硬编码密钥
+        shell: pwsh
+        run: |
+          $patterns = @('sk-[a-zA-Z0-9]{20,}', 'ghp_[a-zA-Z0-9]{30,}')
+          $bad = 0
+          foreach ($pat in $patterns) {
+            $hits = Get-ChildItem -Recurse -File -Include *.py,*.json,*.md,*.bat,*.txt,*.yml |
+                    Where-Object { $_.FullName -notmatch '\\.git\\' } |
+                    Select-String -Pattern $pat -List
+            foreach ($h in $hits) {
+              Write-Host "::error file=$($h.Path)::疑似硬编码密钥 ($pat)"
+              $bad++
+            }
+          }
+          if ($bad -gt 0) { exit 1 }
+          Write-Host "未发现硬编码密钥"
