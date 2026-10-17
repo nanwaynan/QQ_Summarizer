@@ -1,0 +1,19 @@
+# QQ 群聊总结器 —— 运行时依赖
+#
+# 安装：
+#   pip install -r requirements.txt
+#
+# 版本已锁定为开发/验证通过的组合（Python 3.12.9 + Windows 10/11 x64）。
+# 说明：
+#   - 用 PySide6-Essentials 而非完整版 PySide6：省掉 QtWebEngine（约 800MB）
+#   - 不依赖 requests：所有 HTTP 走标准库 urllib
+#   - 不依赖 pywin32：注册表用标准库 winreg，Windows API 用标准库 ctypes
+#   - PySideSix-Frameless-Window 由 PySide6-Fluent-Widgets 自动安装
+
+PySide6-Essentials==6.12.0
+PySide6-Fluent-Widgets==1.11.3
+APScheduler==3.11.3
+Pillow==12.3.0
+
+# ---- 以下仅在需要自行打包 exe 时安装 ----
+# pyinstaller==6.22.3

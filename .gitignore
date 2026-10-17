@@ -1,0 +1,96 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== 构建产物 =====
+build/
+dist/
+dist_of/
+*.manifest
+*.spec.bak
+
+# ===== 运行时日志 =====
+logs/
+*.log
+*.log.[0-9]
+*.log.*
+
+# ===== 本地配置（含 API Key / QQ 号 / 群号，禁止入库）=====
+config.json
+config.json.tmp
+config.json.bak-*
+.env
+.env.*
+!config.example.json
+!**/config.example.json
+
+# ===== 可执行文件与 NapCat（走 Releases，不入库）=====
+# 二进制放仓库会让体积翻倍且无法 diff，GitHub 对单文件还有 100 MB 限制
+*.exe
+*.zip
+napcat_green/
+**/napcat_green/
+**/_internal/
+
+# 但保留 napcat_green 里的纯文本配置模板（如果你想入库）
+!**/config/napcat.json
+!**/config/onebot11.json
+!**/config/webui.json
+
+# ===== NapCat 运行时状态 =====
+**/napcat_*.json
+**/onebot11_*.json
+**/napcat_protocol_*.json
+**/config/.env
+**/cache/
+**/qq_path.txt
+**/napcat_launch.log
+**/guild*.db
+
+# ===== 备份 =====
+*.bak
+*.bak-*
+*.orig
+*.rej
+
+# ===== 数据库 / 数据文件 =====
+*.sqlite
+*.sqlite3
+*.db
+
+# ===== Windows =====
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ===== 编辑器 / IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ===== macOS =====
+.DS_Store
+._*
+
+# ===== 总结输出目录（若误建在项目内）=====
+QQ记录/
+2610*/
