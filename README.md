@@ -4,6 +4,7 @@
 
 **一句话说明**：你一天没看群，它能帮你把群里聊了什么、有哪些重点、有哪些有用的图片，整理成一份可读的日报，存到你自己的电脑上。
 
+[![Release](https://img.shields.io/github/v/release/nanwaynan/QQ_Summarizer?label=release&color=2ea043)](https://github.com/nanwaynan/QQ_Summarizer/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011%20x64-0078d4)]()
 [![Python](https://img.shields.io/badge/python-3.12-3776ab)](https://www.python.org/downloads/)
@@ -14,6 +15,7 @@
 [![遥测上报](https://img.shields.io/badge/遥测上报-0-red)]()
 [![隐私](https://img.shields.io/badge/聊天记录-仅存本地-brightgreen)]()
 
+> **下载**：不想装 Python 的话，直接去 [**Releases**](https://github.com/nanwaynan/QQ_Summarizer/releases/latest) 下载压缩包，解压双击 `启动.bat` 即可。
 > **关于上面几个徽章**：`向群聊发消息 0` 和 `遥测上报 0` 是本程序的设计承诺 —— 只读取、不写入、不上报。`定时任务 支持` 指每日自动总结功能。
 
 > 📌 **第一次用？** 直接跳到 [第二章「30 秒快速上手」](#二30-秒快速上手)，看完就能跑起来。
@@ -114,9 +116,29 @@
 
 如果你只想尽快用起来，看这一节就够了。
 
+### 第 0 步：下载
+
+**能联网、不想装 Python** → 直接去 [**Releases 页面**](https://github.com/nanwaynan/QQ_Summarizer/releases/latest) 下载：
+
+| 文件 | 大小 | 说明 |
+|---|---|---|
+| `Bat_Startup_Version.zip` | 约 55 MB | ✅ **推荐**。解压后双击 `启动.bat` |
+| `EXE_Single_File_Version.zip` | 约 55 MB | 单个 exe，便于拷给别人 |
+
+下载后**解压**到任意目录（路径别含特殊字符），进入解压出的文件夹继续下面的步骤。
+
+**想改代码 / 自己打包** → 用 git clone：
+
+```bash
+git clone https://github.com/nanwaynan/QQ_Summarizer.git
+cd QQ_Summarizer
+```
+
+然后看 [第三章 方式一：源码版](#方式一源码版source_code_version)。
+
 ### 第 1 步：选版本
 
-打开 `QQ_Summary` 文件夹，你会看到三个子文件夹：
+解压后你会看到三个子文件夹：
 
 | 文件夹 | 适合谁 |
 |---|---|
@@ -125,6 +147,8 @@
 | **Source_Code_Version** | 想改代码、自己打包 |
 
 第一次用，直接选 **`Bat_Startup_Version`**。
+
+> 💡 `Source_Code_Version` 里**不含 exe 和 NapCat**（避免仓库臃肿），需要自己装 Python 并准备 NapCat。两个 EXE 版本已内置，开箱即用。
 
 ### 第 2 步：双击启动
 
