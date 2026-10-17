@@ -5,6 +5,7 @@
 **一句话说明**：你一天没看群，它能帮你把群里聊了什么、有哪些重点、有哪些有用的图片，整理成一份可读的日报，存到你自己的电脑上。
 
 [![Release](https://img.shields.io/github/v/release/nanwaynan/QQ_Summarizer?label=release&color=2ea043)](https://github.com/nanwaynan/QQ_Summarizer/releases/latest)
+[![CI](https://github.com/nanwaynan/QQ_Summarizer/actions/workflows/check.yml/badge.svg)](https://github.com/nanwaynan/QQ_Summarizer/actions/workflows/check.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011%20x64-0078d4)]()
 [![Python](https://img.shields.io/badge/python-3.12-3776ab)](https://www.python.org/downloads/)
