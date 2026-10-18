@@ -252,7 +252,25 @@ class NapCatService:
 
     @property
     def napcat_dir(self) -> Path:
-        return Path(self.config.get('napcat_dir'))
+        """NapCat 目录。
+
+        配置为空时 `Path('')` 会退化成当前工作目录（`.`），导致程序去
+        `./cache/qrcode.png` 找二维码，永远找不到。这里显式兜底到配置探测
+        出的目录；再不行就返回当前目录，让调用方通过 is_dir() 判断。
+        """
+        raw = str(self.config.get('napcat_dir') or '').strip()
+        if raw:
+            return Path(raw)
+        # 配置为空：用 config 层的自动探测结果（Config.load 已经写过一次，
+        # 但如果运行期被清空，这里再兜一次）
+        try:
+            from ..config import detect_napcat_dir
+            found = detect_napcat_dir()
+            if found:
+                return Path(found)
+        except Exception:
+            pass
+        return Path.cwd()
 
     @property
     def config_dir(self) -> Path:
@@ -640,18 +658,93 @@ class NapCatService:
 
         Args:
             max_age: 只接受不超过此秒数的图（0 表示不限，用于避免展示过期的旧图）
+
+        注意：这个接口把「文件不存在 / 已过期 / 读取失败」都压成 None，
+        调用方无法区分原因。需要具体原因请用 qrcode_state()。
         """
-        p = self.qrcode_file
-        if not p.exists():
-            return None
+        st = self.qrcode_state(max_age=max_age)
+        return st.get('data')
+
+    def qrcode_state(self, max_age: float = 300) -> dict:
+        """检查二维码文件的详细状态（供 UI 展示具体原因）。
+
+        与 qrcode_bytes() 的区别：这个接口不吞掉失败原因，让界面能告诉用户
+        「到底是文件还没生成，还是已经过期了，还是读取失败」。
+
+        Args:
+            max_age: 超过这个秒数的图视为过期（默认 300 秒 = 5 分钟）
+
+        Returns:
+            {
+              'ok': bool,          # True 表示 data 可用
+              'data': bytes|None,  # 图片字节
+              'reason': str,       # ok | no_dir | no_file | stale | read_error
+              'age': float,        # 文件年龄（秒），未知时为 -1
+              'path': str,         # 检查的文件路径（便于排查）
+              'message': str,      # 给用户看的一句话说明
+            }
+        """
+        out = {
+            'ok': False, 'data': None, 'reason': 'no_file',
+            'age': -1.0, 'path': '', 'message': '',
+        }
+
         try:
-            if max_age > 0:
-                age = time.time() - p.stat().st_mtime
-                if age > max_age:
-                    return None
-            return p.read_bytes()
-        except OSError:
-            return None
+            p = self.qrcode_file
+        except Exception as e:
+            out['reason'] = 'no_dir'
+            out['message'] = f'无法解析 NapCat 目录：{type(e).__name__}'
+            return out
+
+        out['path'] = str(p)
+
+        # ---- 目录不存在 ----
+        base = self.napcat_dir
+        if not base.is_dir():
+            out['reason'] = 'no_dir'
+            out['message'] = f'NapCat 目录不存在：{base}'
+            return out
+
+        # ---- 文件不存在 ----
+        try:
+            exists = p.exists()
+        except OSError as e:
+            out['reason'] = 'read_error'
+            out['message'] = f'检查二维码文件失败：{e}'
+            return out
+
+        if not exists:
+            out['reason'] = 'no_file'
+            out['message'] = 'NapCat 还没有生成二维码（可点「刷新二维码」主动请求）'
+            return out
+
+        # ---- 读文件 + 判断年龄 ----
+        try:
+            st = p.stat()
+            age = time.time() - st.st_mtime
+            out['age'] = age
+
+            if max_age > 0 and age > max_age:
+                out['reason'] = 'stale'
+                out['message'] = (f'二维码已过期（{age:.0f} 秒前生成，'
+                                  f'上限 {max_age:.0f} 秒）')
+                return out
+
+            data = p.read_bytes()
+            if not data:
+                out['reason'] = 'read_error'
+                out['message'] = '二维码文件是空的（可能正在写入）'
+                return out
+
+            out['ok'] = True
+            out['data'] = data
+            out['reason'] = 'ok'
+            out['message'] = f'就绪（{age:.0f} 秒前生成）'
+            return out
+        except OSError as e:
+            out['reason'] = 'read_error'
+            out['message'] = f'读取二维码文件失败：{e}'
+            return out
 
 
 # ---------- 登录状态常量 ----------
@@ -785,23 +878,38 @@ class NapCatWebUI:
         except Exception:
             return False
 
-    def login_status(self) -> dict:
+    def login_status(self, raise_errors: bool = False) -> dict:
         """查询登录状态（含 loginPhase / 二维码 URL）。
 
         这是引导流程的核心接口。
+
+        Args:
+            raise_errors: False（默认，向后兼容）时任何失败都返回空字典；
+                          True 时抛出 NapCatError，让调用方能向用户显示
+                          具体原因（鉴权失败 / 端口不通 / 返回异常）。
+                          二维码弹窗用 True，避免「静默卡死」。
+
+        Raises:
+            NapCatError: 仅当 raise_errors=True 且查询失败时
         """
+        last_err: Exception | None = None
+
         try:
             return self._request('/api/QQLogin/CheckLoginStatus', 'POST',
                                  {}, timeout=8) or {}
-        except NapCatError:
+        except NapCatError as e:
+            last_err = e
             # 凭证可能过期，强刷一次再试
             if self._credential(force=True):
                 try:
                     return self._request('/api/QQLogin/CheckLoginStatus',
                                          'POST', {}, timeout=8) or {}
-                except NapCatError:
-                    pass
-            return {}
+                except NapCatError as e2:
+                    last_err = e2
+
+        if raise_errors:
+            raise NapCatError(str(last_err) if last_err else '查询登录状态失败')
+        return {}
 
     def qrcode_url(self) -> str:
         """获取当前二维码的 URL 字符串。"""

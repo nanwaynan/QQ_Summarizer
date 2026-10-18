@@ -326,6 +326,100 @@ class QrcodeWorker(WorkerBase):
             self.status_text.emit(f'刷新失败：{str(e)[:60]}')
 
 
+class QrcodePollWorker(WorkerBase):
+    """二维码状态轮询（后台线程版）。
+
+    与上面 QrcodeWorker 的区别：
+    - QrcodeWorker 只盯文件变化，不查 WebUI 状态
+    - 本类同时查询 WebUI 登录状态 + 二维码文件状态，并在必要时**主动请求刷新**
+
+    放进 QThread 的原因：NapCat WebUI 的 HTTP 请求单次超时 8 秒，
+    鉴权失败时内部还会重登重试，最坏会阻塞 20 秒以上。
+    放在 GUI 线程里会让弹窗看起来「卡死」，这正是本次修复的核心问题之一。
+
+    Signals:
+        tick_done(dict) : 每轮轮询结束，携带本轮完整结果
+        tick_failed(str): 本轮出现异常（网络/鉴权），附错误文本
+    """
+
+    tick_done = Signal(object)
+    tick_failed = Signal(str)
+
+    # 自动请求刷新的最小间隔（秒）——避免每 2 秒打爆 NapCat
+    REFRESH_COOLDOWN = 10.0
+
+    def __init__(self, config: Config, parent: QObject | None = None):
+        super().__init__(None, parent)
+        self.config = config
+        self._svc = NapCatService(config)
+        self._webui = self._svc.webui()
+        self._last_refresh = 0.0
+        self._refreshed_once = False
+
+    def run(self) -> None:
+        """执行一轮：查状态 → 判断是否需要刷新 → 读二维码。"""
+        import time as _t
+
+        out = {
+            'status': {}, 'error': '', 'qr': {},
+            'refreshed': False, 'refresh_error': '',
+        }
+
+        try:
+            # ---- 1. 查登录状态（严格模式，错误不吞）----
+            try:
+                out['status'] = self._webui.login_status(raise_errors=True) or {}
+            except Exception as e:
+                out['error'] = str(e)[:200]
+                # 状态查不到不代表二维码一定读不到（有些版本鉴权坏了但文件还在写），
+                # 所以继续往下读文件，但把错误带回去让界面显示
+                out['status'] = {}
+
+            if self.should_cancel():
+                return
+
+            # ---- 2. 读二维码文件状态 ----
+            qr = self._svc.qrcode_state(max_age=300)
+            out['qr'] = qr
+
+            # ---- 3. 需要时主动请求刷新 ----
+            # 仅在「服务可达」且「没有可用二维码」时刷新，避免服务没起来时瞎试
+            need_refresh = (not qr.get('ok')
+                            and qr.get('reason') in ('no_file', 'stale'))
+            if need_refresh and not out['error']:
+                now = _t.time()
+                if now - self._last_refresh >= self.REFRESH_COOLDOWN:
+                    self._last_refresh = now
+                    try:
+                        r = self._webui.refresh_qrcode() or {}
+                        out['refreshed'] = True
+                        if r.get('error'):
+                            out['refresh_error'] = str(r['error'])[:200]
+                    except Exception as e:
+                        out['refreshed'] = True
+                        out['refresh_error'] = str(e)[:200]
+                    self._refreshed_once = True
+
+            if self.should_cancel():
+                return
+            self.tick_done.emit(out)
+
+        except Exception as e:
+            if not self.should_cancel():
+                self.tick_failed.emit(f'{type(e).__name__}: {e}')
+        finally:
+            self.done.emit()
+
+    def force_refresh(self) -> dict:
+        """用户手点「刷新二维码」时调用（同步执行，调用方放后台）。"""
+        self._last_refresh = 0.0
+        try:
+            r = self._webui.refresh_qrcode() or {}
+            return {'ok': not r.get('error'), 'error': str(r.get('error') or '')}
+        except Exception as e:
+            return {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+
+
 class SwitchAccountWorker(WorkerBase):
     """切换 QQ 账号（会重启 NapCat，约 1-3 分钟）。"""
 

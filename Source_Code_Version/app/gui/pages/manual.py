@@ -348,7 +348,11 @@ class ManualPage(QWidget):
         if self._qr_dialog is not None:
             return
         try:
-            dlg = QrcodeLoginDialog(self.config, self.window())
+            # 传入日志回调：弹窗内部的失败原因（端口不通/鉴权失败/超时）
+            # 会同步写进「运行日志」，方便用户复制排查
+            dlg = QrcodeLoginDialog(
+                self.config, self.window(),
+                log=lambda lv, msg: self._append_log(lv, msg))
             dlg.logged_in.connect(self._on_qr_logged_in)
             dlg.cancelled.connect(self._on_qr_cancelled)
             self._qr_dialog = dlg
