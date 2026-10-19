@@ -296,6 +296,36 @@ class NapCatService:
         return self.napcat_dir / 'cache' / 'qrcode.png'
 
     @property
+    def launch_log_file(self) -> Path:
+        """启动脚本写的日志（napcat_launch.log）。
+
+        这个文件是判断「脚本到底跑没跑」的关键证据：
+        有记录 = 脚本执行了（但可能卡在某一步）；
+        没记录 = 脚本压根没被调用（UAC 取消 / 杀软拦截 / WSH 被禁用）。
+        """
+        return self.napcat_dir / 'napcat_launch.log'
+
+    def _read_launch_log(self, max_bytes: int = 4000) -> str:
+        """读取启动日志尾部（读不到返回空串）。"""
+        p = self.launch_log_file
+        try:
+            if not p.exists():
+                return ''
+            data = p.read_bytes()
+            return data[-max_bytes:].decode('gbk', errors='replace')
+        except OSError:
+            return ''
+
+    def _launch_log_hint(self) -> str:
+        """根据启动日志给一句诊断提示（等待中途调用）。"""
+        log = self._read_launch_log()
+        if not log:
+            return ('启动脚本尚未写日志 —— 可能 UAC 窗口还没确认，'
+                    '或脚本被安全软件拦截')
+        tail = log.strip().splitlines()[-1] if log.strip() else ''
+        return f'启动脚本最新状态：{tail[:120]}'
+
+    @property
     def hidden_launcher(self) -> Path:
         """隐藏提权启动器（VBS）。绿色包自带；官方包可能没有。"""
         return self.napcat_dir / 'launch_hidden.vbs'
@@ -587,23 +617,53 @@ class NapCatService:
                 return {'ok': False, 'phase': PHASE_ERROR, 'info': {}, 'error': msg}
 
             # ---- 3. 等待 WebUI 出现 ----
+            # 首次在新机器上启动 NapCat 很慢：UAC 确认、QQ 首次启动、
+            # 内核注入、杀软扫描都可能耗时。实测新机器常见 30-90 秒，
+            # 旧的 60 秒硬编码会导致「明明能起来但被判超时」。
+            # 改为可配置（默认 180 秒），并在日志里给出进度反馈。
+            boot_timeout = float(self.config.get('napcat_boot_timeout', 180) or 180)
+            boot_timeout = max(30.0, min(600.0, boot_timeout))
             waited = 0.0
-            while waited < 60:
+            log_hint_shown = False
+            while waited < boot_timeout:
                 if cancel():
                     phase_cb(PHASE_CANCELLED, {})
                     return {'ok': False, 'phase': PHASE_CANCELLED, 'info': {},
                             'error': '已取消'}
                 time.sleep(poll_interval)
                 waited += poll_interval
-                phase_cb(PHASE_STARTING, {'waited': int(waited)})
+                phase_cb(PHASE_STARTING, {'waited': int(waited),
+                                          'total': int(boot_timeout)})
                 if webui.is_available(timeout=2):
+                    self._log(f'WebUI 已就绪（等待 {waited:.0f} 秒）')
                     break
+
+                # 等待过半仍没起来：读一下 bat 写的启动日志，
+                # 判断是「脚本压根没执行」还是「执行了但慢」
+                if not log_hint_shown and waited >= boot_timeout / 2:
+                    log_hint_shown = True
+                    hint = self._launch_log_hint()
+                    if hint:
+                        self._log(f'  {hint}')
             else:
-                msg = ('等待 NapCat 启动超时。\n'
-                       '可能原因：\n'
-                       '  1. 弹出的 UAC 提权窗口未确认（需要点「是」）\n'
-                       '  2. QQ 客户端未安装或路径异常\n'
-                       '  3. NapCat 版本与 QQ 版本不匹配')
+                launch_log = self._read_launch_log()
+                detail = ''
+                if not launch_log:
+                    detail = ('\n\n启动脚本没有写日志，说明它可能压根没被执行：\n'
+                              '  · UAC 提权窗口被取消（需要点「是」）\n'
+                              '  · 杀毒软件拦截了 .vbs 或 .bat\n'
+                              '  · 系统禁用了 Windows Script Host')
+                else:
+                    tail = launch_log.strip().splitlines()[-4:]
+                    detail = ('\n\n启动脚本最后几行日志：\n' +
+                              '\n'.join(f'  {l}' for l in tail))
+                msg = (f'等待 NapCat 启动超时（已等 {boot_timeout:.0f} 秒）。\n'
+                       '可以试试：\n'
+                       '  1. 手动双击 napcat_green\\启动NapCat.bat，看到报错后按提示处理\n'
+                       '  2. 确认 UAC 提权窗口已点「是」\n'
+                       '  3. 确认 QQ 客户端已安装（推荐 NT 9.9.25 ~ 9.9.36）\n'
+                       '  4. 若首次启动特别慢，可在设置里调大「NapCat 启动超时」'
+                       + detail)
                 phase_cb(PHASE_ERROR, {'error': msg})
                 return {'ok': False, 'phase': PHASE_ERROR, 'info': {}, 'error': msg}
 

@@ -42,6 +42,8 @@ class SummarizeResult:
     completeness: dict = field(default_factory=dict)
     error: str = ''
     cancelled: bool = False
+    # 非致命警告（如：模型不支持图片，图片甄选未生效）
+    image_warning: str = ''
 
 
 class SummarizeTask:
@@ -269,6 +271,24 @@ class SummarizeTask:
             min_score=int(cfg.get('img_min_score', 4)))
         hi = sum(1 for x in picked if x.get('score', 0) >= int(cfg.get('img_min_score', 4)))
         self._log(f'  甄选出 {len(picked)} 张（其中高价值 {hi} 张）')
+
+        # ---- 模型不支持图片输入的提示 ----
+        # 评分全批失败 + 没有任何一张拿到真实分数 → 基本可以判定模型不支持视觉。
+        # 这时图片会被"补足"逻辑全部选入（分数默认 3），数量看起来正常但没有甄选效果。
+        vision_err = getattr(ai, 'last_vision_error', '')
+        if vision_err and hi == 0 and scored:
+            self._log('')
+            self._log('  ⚠ 图片甄选未生效：AI 模型可能不支持图片输入')
+            self._log(f'     最后一次错误：{vision_err}')
+            self._log('     后果：图片按默认分 3 全部保留，没有经过真正的价值筛选')
+            self._log('     建议：')
+            self._log('       · 换一个支持视觉的模型（如 gpt-4o / qwen-vl-plus / glm-4v）')
+            self._log('       · 或在设置里把「总结模式」改为「仅文字」，跳过图片处理')
+            res.image_warning = (
+                '图片甄选未生效：当前 AI 模型可能不支持图片输入。\n'
+                f'错误：{vision_err[:120]}\n'
+                '建议换支持视觉的模型，或把总结模式改为「仅文字」。')
+            self._log('')
 
         # 移动 + 清理临时目录
         moved = img_mod.move_selected(picked, folder, subdir='images')

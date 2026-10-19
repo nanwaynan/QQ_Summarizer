@@ -138,6 +138,15 @@ class MainWindow(QWidget):
         return page
 
     def switch_to(self, key: str) -> None:
+        # 离开设置页前，如果存在未保存的修改，先提示
+        if not self._confirm_leave_settings(key):
+            # 用户选择"留下"：把导航选中态拨回设置页
+            try:
+                self.nav.setCurrentItem('settings')
+            except Exception:
+                pass
+            return
+
         page = self._get_page(key)
         if page is None:
             return
@@ -281,10 +290,78 @@ class MainWindow(QWidget):
         # 调色板切换后，依赖窗口底色的控件需要重绘
         self.update()
 
+    # ---------- 未保存提示 ----------
+
+    def _confirm_leave_settings(self, target_key: str) -> bool:
+        """离开设置页前确认。返回 False 表示用户选择留下。
+
+        只在「当前就在设置页」且「有未保存修改」时弹窗。
+        """
+        if target_key == 'settings':
+            return True
+        page = self._pages.get('settings')
+        if page is None:
+            return True
+        if self.stack.currentWidget() is not page:
+            return True
+        try:
+            if not page.has_unsaved_changes():
+                return True
+        except Exception:
+            return True
+
+        from qfluentwidgets import MessageBox
+        box = MessageBox(
+            '有未保存的修改',
+            '设置页里有改动还没保存，离开后会丢失。\n要现在保存吗？',
+            self)
+        box.yesButton.setText('保存并离开')
+        box.cancelButton.setText('留在这里')
+
+        if box.exec():
+            try:
+                page.save_settings()
+            except Exception as e:
+                self.logger.error(f'保存设置失败: {e}')
+            return True
+        return False
+
+    def _confirm_close_with_unsaved(self) -> bool:
+        """关闭窗口前检查设置页未保存修改。返回 False 表示取消关闭。"""
+        page = self._pages.get('settings')
+        if page is None:
+            return True
+        try:
+            if not page.has_unsaved_changes():
+                return True
+        except Exception:
+            return True
+
+        from qfluentwidgets import MessageBox
+        box = MessageBox(
+            '有未保存的修改',
+            '设置页里有改动还没保存，退出后会丢失。\n要现在保存吗？',
+            self)
+        box.yesButton.setText('保存并退出')
+        box.cancelButton.setText('取消')
+
+        if box.exec():
+            try:
+                page.save_settings()
+            except Exception as e:
+                self.logger.error(f'保存设置失败: {e}')
+            return True
+        return False
+
     # ---------- 关闭 ----------
 
     def closeEvent(self, event) -> None:  # noqa: N802
         """关闭时最小化到托盘（若启用）。"""
+        # 真正退出前，检查设置页是否有未保存修改
+        if self._force_quit and not self._confirm_close_with_unsaved():
+            event.ignore()
+            return
+
         if self.config.get('minimize_to_tray', True) and not self._force_quit:
             event.ignore()
             self.hide()

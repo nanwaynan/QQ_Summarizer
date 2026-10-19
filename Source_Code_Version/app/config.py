@@ -139,6 +139,7 @@ DEFAULTS: dict[str, Any] = {
     'napcat_api': 'http://127.0.0.1:3000',
     'napcat_dir': '',
     'napcat_webui': 'http://127.0.0.1:6099',
+    'napcat_boot_timeout': 180,     # 等 NapCat 启动的上限（秒），新机器首次可能较慢
 
     # 输出
     'output_dir': str(Path.home() / 'Desktop' / 'QQ记录'),

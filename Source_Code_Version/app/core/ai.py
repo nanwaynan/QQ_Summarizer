@@ -36,6 +36,8 @@ class AIClient:
         self.config = config
         self._log = log or (lambda m: None)
         self._should_cancel = should_cancel or (lambda: False)
+        # 记录视觉相关调用的首个错误（用于判断"模型不支持图片输入"）
+        self.last_vision_error = ''
 
     # ---------- 底层调用 ----------
 
@@ -249,7 +251,11 @@ class AIClient:
             except AIError as e:
                 if '已取消' in str(e):
                     raise
-                self._log(f'      评分失败: {str(e)[:100]}')
+                err_text = str(e)[:160]
+                self._log(f'      评分失败: {err_text}')
+                # 记录首个失败原因，供上层判断"模型不支持图片"
+                if not getattr(self, 'last_vision_error', ''):
+                    self.last_vision_error = err_text
                 for img in batch:
                     img.setdefault('score', 3)
                     img.setdefault('reason', '评分异常')

@@ -454,6 +454,15 @@ class ManualPage(QWidget):
                 f'有效发言 {r.valid_count} 条，图片 {r.image_count} 张\n'
                 f'已保存到 {r.output_file.parent}',
                 duration=6000, position=InfoBarPosition.TOP_RIGHT, parent=self)
+
+            # 图片甄选未生效时（模型不支持视觉），单独给一条警告
+            warn = getattr(r, 'image_warning', '')
+            if warn:
+                InfoBar.warning(
+                    '图片甄选未生效',
+                    warn[:300],
+                    duration=12000, position=InfoBarPosition.TOP_RIGHT, parent=self)
+
             # 询问是否打开目录
             QTimer.singleShot(800, self.open_output_dir)
         elif getattr(r, 'cancelled', False):

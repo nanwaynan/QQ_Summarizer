@@ -75,12 +75,13 @@ class AutoPage(QWidget):
 
         self.auto_hint = CaptionLabel(
             '总结范围：昨天 12:00 ~ 今天 12:00（与归档口径一致）。\n'
-            '若触发时间早于 12:00，则总结「前天 12:00 ~ 昨天 12:00」。')
+            '若触发时间早于 12:00，则总结「前天 12:00 ~ 昨天 12:00」。\n'
+            '改动开关或时间后立即生效，无需重启程序。')
         l1.addWidget(self.auto_hint)
 
         row_catch = QHBoxLayout()
         row_catch.addWidget(BodyLabel('错过时补跑'))
-        self.catch_hint = CaptionLabel('（开机后若发现今天还没跑，则立即补一次）')
+        self.catch_hint = CaptionLabel('（只在程序启动时检查一次，不会立即补跑）')
         row_catch.addWidget(self.catch_hint)
         row_catch.addStretch(1)
         self.sw_catch = SwitchButton()
@@ -175,6 +176,12 @@ class AutoPage(QWidget):
     def _on_catch_toggled(self, checked: bool) -> None:
         self.config.set('auto_catch_up', bool(checked))
         self._persist()
+        # 补跑检查只在程序启动时做一次，这里如实告知，避免用户以为立刻会跑
+        if checked:
+            InfoBar.info(
+                '补跑已开启',
+                '补跑只在下次启动程序时检查一次。本次运行不会立刻补跑。',
+                duration=6000, position=InfoBarPosition.TOP_RIGHT, parent=self)
 
     def _on_time_changed(self, t: QTime) -> None:
         self.config.set('auto_time', f'{t.hour():02d}:{t.minute():02d}')

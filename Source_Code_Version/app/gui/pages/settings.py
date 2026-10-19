@@ -189,6 +189,29 @@ class SettingsPage(QWidget):
         out_wrap.setLayout(out_row)
         misc_form.addRow('输出目录', out_wrap)
 
+        # ---- NapCat 目录（多处报错文案都提示"设置页可修改"，这里补上）----
+        ng_row = QHBoxLayout()
+        self.in_napcat_dir = LineEdit()
+        self.in_napcat_dir.setPlaceholderText('留空 = 自动探测（程序目录下的 napcat_green）')
+        ng_row.addWidget(self.in_napcat_dir, 1)
+        btn_pick_ng = PushButton('浏览')
+        btn_pick_ng.clicked.connect(self.pick_napcat_dir)
+        ng_row.addWidget(btn_pick_ng)
+        btn_auto_ng = PushButton('自动探测')
+        btn_auto_ng.clicked.connect(self.auto_detect_napcat)
+        ng_row.addWidget(btn_auto_ng)
+        ng_wrap = QWidget()
+        ng_wrap.setLayout(ng_row)
+        misc_form.addRow('NapCat 目录', ng_wrap)
+
+        self.ng_hint = CaptionLabel('')
+        misc_form.addRow('', self.ng_hint)
+
+        # ---- NapCat 启动超时（新机器首次启动可能很慢）----
+        self.in_boot_timeout = LineEdit()
+        self.in_boot_timeout.setPlaceholderText('180')
+        misc_form.addRow('NapCat 启动超时（秒）', self.in_boot_timeout)
+
         # 总结模式：两个选项同时可见，比下拉框直观
         mode_row = QHBoxLayout()
         mode_row.setSpacing(16)
@@ -291,6 +314,104 @@ class SettingsPage(QWidget):
         if cur:
             self.acc_status.setText(f'当前账号：{cur}')
 
+        # NapCat 目录与启动超时
+        self.in_napcat_dir.setText(str(c.get('napcat_dir') or ''))
+        self.in_boot_timeout.setText(str(c.get('napcat_boot_timeout', 180) or 180))
+        self._refresh_ng_hint()
+
+        # 记录"已保存状态"的快照，用于判断有没有未保存的修改
+        self._saved_snapshot = self._current_snapshot()
+        self._dirty = False
+
+    # ---------- 未保存检测 ----------
+
+    def _current_snapshot(self) -> tuple:
+        """把当前界面值拍成快照（用于比较是否改动过）。"""
+        try:
+            theme_idx = self.cmb_theme.currentIndex()
+        except Exception:
+            theme_idx = 0
+        return (
+            self.in_base.text().strip(),
+            self.in_model.text().strip(),
+            self.in_key.text().strip(),
+            self.in_output.text().strip(),
+            self.in_max_images.text().strip(),
+            self.in_min_score.text().strip(),
+            self.sw_images.isChecked(),
+            self.rb_mode_text.isChecked(),
+            theme_idx,
+            self.in_napcat_dir.text().strip(),
+            self.in_boot_timeout.text().strip(),
+            tuple(sorted(self._selected_groups)),
+            self.acc_combo.currentIndex() if self._accounts else -1,
+        )
+
+    def has_unsaved_changes(self) -> bool:
+        """是否有未保存的修改。"""
+        saved = getattr(self, '_saved_snapshot', None)
+        if saved is None:
+            return False
+        return self._current_snapshot() != saved
+
+    # ---------- NapCat 目录 ----------
+
+    def pick_napcat_dir(self) -> None:
+        """手动选择 NapCat 目录。"""
+        from PySide6.QtWidgets import QFileDialog
+        start = self.in_napcat_dir.text().strip() or str(self.config.get('napcat_dir') or '')
+        d = QFileDialog.getExistingDirectory(self, '选择 NapCat 目录', start)
+        if d:
+            self.in_napcat_dir.setText(d)
+            self._refresh_ng_hint()
+
+    def auto_detect_napcat(self) -> None:
+        """重新自动探测 NapCat 目录。"""
+        from ...config import detect_napcat_dir
+        found = detect_napcat_dir()
+        if found:
+            self.in_napcat_dir.setText(found)
+            self._refresh_ng_hint()
+            InfoBar.success('已找到', found, duration=4000,
+                            position=InfoBarPosition.TOP_RIGHT, parent=self)
+        else:
+            self.in_napcat_dir.setText('')
+            self._refresh_ng_hint()
+            InfoBar.warning(
+                '未找到 NapCat',
+                '请确认 napcat_green 文件夹在程序目录下，或手动选择目录',
+                duration=6000, position=InfoBarPosition.TOP_RIGHT, parent=self)
+
+    def _refresh_ng_hint(self) -> None:
+        """检查当前输入的 NapCat 目录是否有效，并显示提示。"""
+        raw = self.in_napcat_dir.text().strip()
+        if not raw:
+            self.ng_hint.setText('留空时会自动探测：程序目录 → 上级目录 → C:\\NapCat')
+            self.ng_hint.setTextColor('#9d5d00', '#ffd166')
+            return
+
+        from pathlib import Path
+        d = Path(raw)
+        if not d.is_dir():
+            self.ng_hint.setText('⚠ 该目录不存在')
+            self.ng_hint.setTextColor('#c42b1c', '#ff99a4')
+            return
+
+        needed = ('NapCatWinBootMain.exe', 'NapCatWinBootHook.dll', 'napcat.mjs')
+        missing = [n for n in needed if not (d / n).exists()]
+        if missing:
+            self.ng_hint.setText(f'⚠ 目录不完整，缺少：{", ".join(missing)}')
+            self.ng_hint.setTextColor('#c42b1c', '#ff99a4')
+        else:
+            bat = None
+            for name in ('start.bat', '启动NapCat.bat'):
+                if (d / name).exists():
+                    bat = name
+                    break
+            self.ng_hint.setText(
+                f'✓ 有效目录（启动脚本：{bat or "未找到"}）')
+            self.ng_hint.setTextColor('#107c10', '#6ccb5f')
+
     def save_settings(self) -> None:
         c = self.config
         c.set('ai_base', self.in_base.text().strip())
@@ -312,6 +433,15 @@ class SettingsPage(QWidget):
         c.set('summary_mode',
               'text_only' if self.rb_mode_text.isChecked() else 'text_image')
         c.set('theme', ['auto', 'light', 'dark'][self.cmb_theme.currentIndex()])
+
+        # NapCat 目录与启动超时
+        ng_dir = self.in_napcat_dir.text().strip()
+        c.set('napcat_dir', ng_dir)
+        try:
+            bt = int(self.in_boot_timeout.text() or 180)
+            c.set('napcat_boot_timeout', max(30, min(600, bt)))
+        except ValueError:
+            c.set('napcat_boot_timeout', 180)
 
         # 群选择：选中项写入 group_ids，第一个同步到 group_id/group_name
         ids = sorted(self._selected_groups)
@@ -337,6 +467,10 @@ class SettingsPage(QWidget):
 
         # 让日志知道新的 key（用于打码）
         self.logger.register_secret(str(c.get('ai_key', '')))
+
+        # 保存成功：更新"已保存"快照，清除未保存标记
+        self._saved_snapshot = self._current_snapshot()
+        self._dirty = False
 
         # 通知主窗口切主题
         w = self.window()
