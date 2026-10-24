@@ -28,7 +28,7 @@ assignees: ''
 
 | 项目 | 内容 |
 |---|---|
-| 使用的版本 | <!-- Bat_Startup_Version / EXE_Single_File_Version / 源码 --> |
+| 使用的版本 | <!-- Bat_Startup_Version / 源码 --> |
 | Windows 版本 | <!-- 如 Windows 11 23H2 x64 --> |
 | QQ 客户端版本 | <!-- 程序「使用帮助」页可以看到，如 9.9.36-53644 --> |
 | NapCat 版本 | <!-- 如 v4.18.38 --> |

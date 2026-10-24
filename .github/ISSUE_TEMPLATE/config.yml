@@ -2,9 +2,9 @@
 
 ## 1. 先查 FAQ
 
-[README 第七章](https://github.com/nanwaynan/QQ_Summarizer#七常见问题faq) 有 40 条按症状分类的常见问题，覆盖：
+[README 第七章](https://github.com/nanwaynan/QQ_Summarizer#七常见问题faq) 有 39 条按症状分类的常见问题，覆盖：
 
-- 启动闪退、单文件版慢、缺 DLL
+- 启动闪退、缺 DLL
 - 服务红点、转圈不动、二维码不出、QQ 风控
 - API 报错、总结太慢、图片为空
 - 数据不完整警告、切换账号卡住
@@ -26,7 +26,7 @@
 
 提问时请提供：
 
-- **使用的版本**：Bat_Startup_Version / EXE_Single_File_Version / 源码
+- **使用的版本**：Bat_Startup_Version / 源码
 - **QQ 版本**：程序「使用帮助」页可以直接看到
 - **具体报错**：日志片段（`logs\app.log`，Key 已自动打码，可放心贴）
 - **复现步骤**：你是怎么操作的

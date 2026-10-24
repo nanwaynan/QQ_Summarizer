@@ -4,6 +4,23 @@
 
 ---
 
+## [v1.0.3] - 2026-10-24
+
+### 变更
+
+- **移除单文件版（`EXE_Single_File_Version`）**
+  - 原因：与文件夹版功能完全相同，仅打包形态不同（onedir vs onefile），
+    维护两套发布物带来的是两份 55 MB 的压缩包和一套重复文档，收益很低。
+  - 保留 `Bat_Startup_Version`（免安装，启动 1-3 秒）作为唯一的开箱即用发布形态。
+  - 仍需要单文件 exe 的用户，可用源码版 `build_onefile.spec` 自行打包。
+
+- **仓库精简**
+  - 删除 `EXE_Single_File_Version/` 目录与其下载说明。
+  - README 相应改写：删除"方式三：单文件版"整节、相关 FAQ 条目、目录树中的单文件版分支。
+  - FAQ 条目由 40 条调整为 39 条，编号连续。
+
+---
+
 ## [v1.0.2] - 2026-10-19
 
 ### 修复
@@ -120,12 +137,15 @@
 
 ## 版本说明
 
-### 关于三个发布形态
+### 关于两种发布形态
 
 | 形态 | 说明 |
 |---|---|
-| `Bat_Startup_Version.zip` | 文件夹版（推荐）。exe + `_internal` + NapCat，启动 1-3 秒 |
-| `EXE_Single_File_Version.zip` | 单文件版。一个 exe，便于分发，首次启动需自解压 5-15 秒 |
+| `Bat_Startup_Version.zip` | 免安装版（推荐）。exe + `_internal` + NapCat，启动 1-3 秒 |
 | `Source_Code_Version/` | 源码（仓库内）。需要 Python 3.12，自行准备 NapCat |
 
-三者功能完全一致，共用同一套 `config.json` 格式。
+两者功能完全一致，共用同一套 `config.json` 格式。
+
+> **v1.0.3 起的调整**：不再提供 `EXE_Single_File_Version`（单文件版）。
+> 它和文件夹版功能完全相同，只是打包形态不同，维护两套发布物性价比不高。
+> 需要单文件 exe 的话，用源码版的 `build_onefile.spec` 自己打一个即可。
