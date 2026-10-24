@@ -40,7 +40,8 @@ class HelpPage(QWidget):
 
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet('QScrollArea { border: none; background: transparent; }')
+        # 不设 background: transparent —— 透明视口会透出纯黑调色板
+        scroll.setStyleSheet('QScrollArea { border: none; }')
 
         container = QWidget()
         root = QVBoxLayout(container)

@@ -203,7 +203,7 @@
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
-| `Bat_Startup_Version.zip` | 约 55 MB | 解压后双击 `启动.bat` 即可使用 |
+| `Bat_Startup_Version.zip` | 约 55 MB | 解压后双击 `启动.bat` 即可使用（v1.0.4） |
 
 下载后**解压**到任意目录（路径别含特殊字符），进入解压出的文件夹继续下面的步骤。
 
@@ -382,17 +382,16 @@ set QQSUMMARIZER_NAPCAT_DIR=D:\your\napcat\dir
 
 ```
 Bat_Startup_Version\
-├── 启动.bat                    ← 双击这个
+├── 启动.bat            ← 双击这个
+├── QQ总结器.exe        ← 主程序
+├── _internal\          ← 112 MB，必须和 exe 同目录
+├── napcat_green\       ← 23 MB，拉 QQ 消息必需
 ├── 使用说明.md
-├── config.example.json
-├── 文件夹版\
-│   ├── QQ总结器.exe
-│   └── _internal\              ← 112 MB，必须和 exe 同目录
-└── napcat_green\               ← 23 MB，拉 QQ 消息必需
+└── config.example.json
 ```
 
 ⚠️ **两个"必须"**：
-- `文件夹版\_internal` 必须存在，否则 exe 起不来
+- `_internal` 必须存在，否则 exe 起不来
 - `napcat_green` 必须存在，否则程序能开但拉不到消息
 
 #### 使用步骤
@@ -403,7 +402,7 @@ Bat_Startup_Version\
 
 #### 拷到别的电脑
 
-要拷**整个 `Bat_Startup_Version` 文件夹**（`文件夹版` + `napcat_green`），不要只拷 `QQ总结器.exe`。
+要拷**整个 `Bat_Startup_Version` 文件夹**（exe + `_internal` + `napcat_green`），不要只拷 `QQ总结器.exe`。
 
 只拷 exe 的话，新电脑上：
 - 程序起不来（缺 `_internal` 依赖库）
@@ -709,7 +708,7 @@ NapCat 通过内存偏移读取 QQ 内部数据结构，QQ 每次大版本更新
 
 | 版本 | 路径 |
 |---|---|
-| 免安装版 | `Bat_Startup_Version\文件夹版\config.json` |
+| 免安装版 | `Bat_Startup_Version\config.json` |
 | 源码版 | `Source_Code_Version\config.json` |
 
 首次运行自动生成，不用手动创建。
@@ -831,7 +830,7 @@ NapCat 通过内存偏移读取 QQ 内部数据结构，QQ 每次大版本更新
 
 **Q2：提示缺少 python312.dll / VCRUNTIME140.dll 之类**
 
-说明 `文件夹版\_internal` 不完整，通常是**杀毒软件拦截或解压中断**导致的。
+说明 `_internal` 目录不完整，通常是**杀毒软件拦截或解压中断**导致的。
 
 - 把整个 `Bat_Startup_Version` 文件夹加到杀软白名单
 - 重新解压发布包，确认 `_internal` 下文件齐全（约 815 个）
@@ -846,7 +845,7 @@ exe 没有代码签名证书，这是 Windows SmartScreen 的默认行为。
 
 检查目录结构是否完整：
 
-- 文件夹版：`文件夹版\QQ总结器.exe` 和 `文件夹版\_internal\` 都要在
+- `QQ总结器.exe` 和 `_internal\` 都要在
 
 如果整个文件夹被误删，需要重新获取发布包。
 

@@ -376,6 +376,44 @@ class NapCatService:
                 pass
         time.sleep(3)
 
+    def _ensure_load_script(self) -> None:
+        r"""生成 loadNapCat.js，指向真实的 napcat.mjs 绝对路径。
+
+        为什么必须由程序来写而不是交给 bat：
+        注入器用 `import("file:///...")` 加载主模块，URL 里的中文、空格、
+        `#`、`%` 都必须做百分号编码，否则部分运行环境会解析失败。
+        bat 里的 `%VAR:\=/%` 只换斜杠，不做编码，覆盖不了这些情况。
+
+        这里用 pathlib 的 `as_uri()` 生成符合 RFC 8089 的 file URL
+        （自动对非 ASCII 与空格做百分号编码）。
+        """
+        main_js = self.napcat_dir / 'napcat.mjs'
+        if not main_js.exists():
+            return
+        try:
+            uri = main_js.resolve().as_uri()
+        except Exception:
+            # 极老版本 pathlib 在大写盘符上有兼容问题，退回手工拼
+            uri = 'file:///' + str(main_js.resolve()).replace('\\', '/')
+
+        target = self.napcat_dir / 'loadNapCat.js'
+        content = f'(async () => {{await import("{uri}")}})()\n'
+        try:
+            # 只在内容确实变化时写，避免无谓改动触发注入器重载
+            if target.exists():
+                try:
+                    if target.read_text(encoding='utf-8') == content:
+                        return
+                except OSError:
+                    pass
+            target.write_text(content, encoding='utf-8')
+            self._log(f'已生成注入脚本：{target.name} → {uri}')
+        except OSError as e:
+            raise NapCatError(
+                f'无法写入 {target}：{e}\n'
+                f'请确认该目录可写（不要放在 Program Files 下运行）。'
+            ) from e
+
     def start(self, auto: bool = True) -> None:
         """启动 NapCat。
 
@@ -390,6 +428,12 @@ class NapCatService:
         bat = self.start_bat
         if not bat.exists():
             raise NapCatError(f'找不到启动脚本: {bat}')
+
+        # 先把 loadNapCat.js 写成正确的 file URL（中文/空格路径的关键修复）。
+        # bat 内部也会重写这个文件，但它的实现不做 URL 编码，所以必须在这里
+        # 先写对；若 bat 随后覆盖，下面 wait_ready 会因端口不通而报错，
+        # 我们对这种情况给出明确提示（见 ensure_running 的超时分支）。
+        self._ensure_load_script()
 
         vbs = self.hidden_launcher
         if vbs.exists():
@@ -646,24 +690,7 @@ class NapCatService:
                     if hint:
                         self._log(f'  {hint}')
             else:
-                launch_log = self._read_launch_log()
-                detail = ''
-                if not launch_log:
-                    detail = ('\n\n启动脚本没有写日志，说明它可能压根没被执行：\n'
-                              '  · UAC 提权窗口被取消（需要点「是」）\n'
-                              '  · 杀毒软件拦截了 .vbs 或 .bat\n'
-                              '  · 系统禁用了 Windows Script Host')
-                else:
-                    tail = launch_log.strip().splitlines()[-4:]
-                    detail = ('\n\n启动脚本最后几行日志：\n' +
-                              '\n'.join(f'  {l}' for l in tail))
-                msg = (f'等待 NapCat 启动超时（已等 {boot_timeout:.0f} 秒）。\n'
-                       '可以试试：\n'
-                       '  1. 手动双击 napcat_green\\启动NapCat.bat，看到报错后按提示处理\n'
-                       '  2. 确认 UAC 提权窗口已点「是」\n'
-                       '  3. 确认 QQ 客户端已安装（推荐 NT 9.9.25 ~ 9.9.36）\n'
-                       '  4. 若首次启动特别慢，可在设置里调大「NapCat 启动超时」'
-                       + detail)
+                msg = self._diagnose_boot_timeout(boot_timeout)
                 phase_cb(PHASE_ERROR, {'error': msg})
                 return {'ok': False, 'phase': PHASE_ERROR, 'info': {}, 'error': msg}
 
@@ -712,6 +739,56 @@ class NapCatService:
                '或关闭 QQ 后重试。')
         phase_cb(PHASE_ERROR, {'error': msg})
         return {'ok': False, 'phase': PHASE_ERROR, 'info': {}, 'error': msg}
+
+    def _diagnose_boot_timeout(self, boot_timeout: float) -> str:
+        """超时后给出**具体**原因，而不是一串可能性。
+
+        按「进程是否存活」分层判断，用户能直接看出卡在哪一步：
+        - 注入器进程不在 → 脚本没跑起来（UAC/杀软/WSH）
+        - 注入器在、QQ 不在 → 启动器执行了但没能拉起 QQ（路径/权限）
+        - 两个都在 → QQ 起来了但 NapCat 内核没加载（版本/注入失败）
+        """
+        pids = self.running_pids()
+        has_launcher = bool(pids.get('NapCatWinBootMain'))
+        has_qq = bool(pids.get('QQ'))
+        launch_log = self._read_launch_log()
+
+        # ---- 分层诊断 ----
+        if not has_launcher and not has_qq:
+            head = ('注入器进程没有在运行 —— 启动脚本没能执行到注入环节。')
+            tips = ('  · UAC 提权窗口被取消了（必须点「是」）\n'
+                    '  · 杀毒软件拦截了 launch_hidden.vbs 或 启动NapCat.bat\n'
+                    '  · 系统禁用了 Windows Script Host（cscript/wscript 不可用）')
+        elif has_launcher and not has_qq:
+            head = ('注入器在运行，但 QQ 没有被启动 —— 启动器找不到 QQ 客户端。')
+            tips = ('  · 确认 QQ 已安装（当前检测结果见「使用帮助」页）\n'
+                    '  · 若 QQ 装在非标准位置，把 QQ.exe 拖到 启动NapCat.bat 上\n'
+                    '    （会自动记录路径到 qq_path.txt）')
+        elif has_qq and not has_launcher:
+            head = ('QQ 在运行，但注入器已退出 —— NapCat 注入失败。')
+            tips = ('  · QQ 版本可能不在 NapCat 支持列表内（见「使用帮助」页）\n'
+                    '  · 若刚才登录了别的 QQ，先完全退出 QQ 再重试\n'
+                    '  · 某些安全软件会阻止 DLL 注入')
+        else:
+            head = ('注入器与 QQ 都在运行，但 NapCat 内核没有加载 —— 注入未生效。')
+            tips = ('  · QQ 版本可能与 NapCat 的偏移表不匹配\n'
+                    '  · 尝试完全退出 QQ（含托盘图标）后重新启动服务\n'
+                    '  · 若有其他 QQ 辅助工具（防撤回等）同时运行，先关闭它们')
+
+        # ---- 附上启动日志尾部 ----
+        detail = ''
+        if launch_log:
+            tail = launch_log.strip().splitlines()[-6:]
+            detail = ('\n\n启动脚本最后几行：\n' +
+                      '\n'.join(f'  {l.strip()}' for l in tail))
+        else:
+            detail = ('\n\n（启动脚本没有写日志，说明它可能压根没被执行）')
+
+        return (f'等待 NapCat 启动超时（已等 {boot_timeout:.0f} 秒）。\n\n'
+                f'{head}\n{tips}'
+                f'{detail}\n\n'
+                f'需要更多帮助：程序目录下的 napcat_green\\napcat_launch.log，\n'
+                f'或手动双击 napcat_green\\启动NapCat.bat 观察命令行输出。')
 
     def qrcode_bytes(self, max_age: float = 0) -> bytes | None:
         """读取当前二维码图片（字节）。

@@ -17,9 +17,9 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel, CaptionLabel, CardWidget, CheckBox, ComboBox,
-    InfoBar, InfoBarPosition, LineEdit, PasswordLineEdit, PrimaryPushButton,
-    PushButton, RadioButton, ScrollArea, StrongBodyLabel, SubtitleLabel,
-    SwitchButton,
+    InfoBar, InfoBarPosition, LineEdit, ListWidget, PasswordLineEdit,
+    PrimaryPushButton, PushButton, RadioButton, ScrollArea, StrongBodyLabel,
+    SubtitleLabel, SwitchButton,
 )
 
 from ...config import Config, mask_key
@@ -48,13 +48,27 @@ class SettingsPage(QWidget):
 
     # ---------- UI ----------
 
+    def _form_label(self, text: str) -> BodyLabel:
+        """表单左侧标签。
+
+        不用 `QFormLayout.addRow('文字', widget)`：那会创建一个**裸 QLabel**，
+        它不监听 qconfig.themeChanged，切换主题后文字颜色不跟随，
+        浅色主题下卡片里的标签会变成几乎看不见的浅灰。
+        `BodyLabel` 内置了主题色回调，切换时自动重算。
+        """
+        lab = BodyLabel(text)
+        lab.setMinimumWidth(110)
+        return lab
+
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
         scroll = ScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setStyleSheet('QScrollArea { border: none; background: transparent; }')
+        # 不设 background: transparent —— 透明视口会透出 qfluentwidgets 给
+        # QScrollArea 设的纯黑调色板，浅色主题下整个内容区会变黑。
+        scroll.setStyleSheet('QScrollArea { border: none; }')
 
         container = QWidget()
         root = QVBoxLayout(container)
@@ -73,11 +87,11 @@ class SettingsPage(QWidget):
 
         self.in_base = LineEdit()
         self.in_base.setPlaceholderText('http://127.0.0.1:7863/v1')
-        ai_form.addRow('接口地址', self.in_base)
+        ai_form.addRow(self._form_label('接口地址'), self.in_base)
 
         self.in_model = LineEdit()
         self.in_model.setPlaceholderText('hy3')
-        ai_form.addRow('模型名称', self.in_model)
+        ai_form.addRow(self._form_label('模型名称'), self.in_model)
 
         key_row = QHBoxLayout()
         self.in_key = PasswordLineEdit()
@@ -88,7 +102,7 @@ class SettingsPage(QWidget):
         key_row.addWidget(self.btn_show_key)
         key_wrap = QWidget()
         key_wrap.setLayout(key_row)
-        ai_form.addRow('API Key', key_wrap)
+        ai_form.addRow(self._form_label('API Key'), key_wrap)
 
         test_row = QHBoxLayout()
         self.btn_test = PushButton('测试连接')
@@ -154,7 +168,9 @@ class SettingsPage(QWidget):
         self.grp_search.textChanged.connect(self._filter_groups)
         grp_lay.addWidget(self.grp_search)
 
-        self.grp_list = QListWidget()
+        # 用 qfluentwidgets 的 ListWidget：它注册了主题 QSS，
+        # 裸 QListWidget 在浅色主题下会保留系统深色底（黑块）。
+        self.grp_list = ListWidget()
         self.grp_list.setMinimumHeight(180)
         self.grp_list.itemChanged.connect(self._on_group_item_changed)
         grp_lay.addWidget(self.grp_list)
@@ -187,7 +203,7 @@ class SettingsPage(QWidget):
         out_row.addWidget(btn_pick)
         out_wrap = QWidget()
         out_wrap.setLayout(out_row)
-        misc_form.addRow('输出目录', out_wrap)
+        misc_form.addRow(self._form_label('输出目录'), out_wrap)
 
         # ---- NapCat 目录（多处报错文案都提示"设置页可修改"，这里补上）----
         ng_row = QHBoxLayout()
@@ -202,7 +218,7 @@ class SettingsPage(QWidget):
         ng_row.addWidget(btn_auto_ng)
         ng_wrap = QWidget()
         ng_wrap.setLayout(ng_row)
-        misc_form.addRow('NapCat 目录', ng_wrap)
+        misc_form.addRow(self._form_label('NapCat 目录'), ng_wrap)
 
         self.ng_hint = CaptionLabel('')
         misc_form.addRow('', self.ng_hint)
@@ -210,7 +226,7 @@ class SettingsPage(QWidget):
         # ---- NapCat 启动超时（新机器首次启动可能很慢）----
         self.in_boot_timeout = LineEdit()
         self.in_boot_timeout.setPlaceholderText('180')
-        misc_form.addRow('NapCat 启动超时（秒）', self.in_boot_timeout)
+        misc_form.addRow(self._form_label('NapCat 启动超时（秒）'), self.in_boot_timeout)
 
         # 总结模式：两个选项同时可见，比下拉框直观
         mode_row = QHBoxLayout()
@@ -226,7 +242,7 @@ class SettingsPage(QWidget):
         mode_row.addStretch(1)
         mode_wrap = QWidget()
         mode_wrap.setLayout(mode_row)
-        misc_form.addRow('总结模式', mode_wrap)
+        misc_form.addRow(self._form_label('总结模式'), mode_wrap)
 
         self.mode_hint = CaptionLabel(
             '「文字 + 图片」会抓取群内图片并由 AI 甄选后附在总结末尾；'
@@ -236,15 +252,15 @@ class SettingsPage(QWidget):
         self.sw_images = SwitchButton()
         self.sw_images.setOnText('开启')
         self.sw_images.setOffText('关闭')
-        misc_form.addRow('保存图片', self.sw_images)
+        misc_form.addRow(self._form_label('保存图片'), self.sw_images)
 
         self.in_max_images = LineEdit()
         self.in_max_images.setPlaceholderText('40')
-        misc_form.addRow('每期最多图片数', self.in_max_images)
+        misc_form.addRow(self._form_label('每期最多图片数'), self.in_max_images)
 
         self.in_min_score = LineEdit()
         self.in_min_score.setPlaceholderText('4')
-        misc_form.addRow('图片最低分(1-5)', self.in_min_score)
+        misc_form.addRow(self._form_label('图片最低分(1-5)'), self.in_min_score)
 
         # 「仅文字」时这几项无意义，置灰避免误解
         self._img_rows: list[QWidget] = [
@@ -254,7 +270,7 @@ class SettingsPage(QWidget):
 
         self.cmb_theme = ComboBox()
         self.cmb_theme.addItems(['跟随系统', '浅色', '深色'])
-        misc_form.addRow('主题', self.cmb_theme)
+        misc_form.addRow(self._form_label('主题'), self.cmb_theme)
 
         root.addWidget(misc_card)
 
@@ -647,7 +663,17 @@ class SettingsPage(QWidget):
             self._render_groups()
 
         def _fail(msg: str) -> None:
-            self.grp_status.setText(f'加载失败：{msg[:80]}')
+            # 「无法连接 NapCat」是最常见的新手卡点：服务没起就拉群列表。
+            # 只说"连接失败"没有出路，这里直接给出下一步该点哪里。
+            low = str(msg).lower()
+            if ('10061' in low or '拒绝' in low or 'refused' in low
+                    or '无法连接' in low):
+                self.grp_status.setText(
+                    '无法连接 NapCat —— 服务还没启动。\n'
+                    '请先点下面的按钮启动服务，等状态变绿再回来刷新。')
+                self._show_start_service_hint()
+            else:
+                self.grp_status.setText(f'加载失败：{msg[:120]}')
 
         def _finish() -> None:
             self.btn_reload_grp.setEnabled(True)
@@ -656,6 +682,37 @@ class SettingsPage(QWidget):
         w.failed.connect(_fail)
         w.done.connect(_finish)
         w.start()
+
+    def _show_start_service_hint(self) -> None:
+        """在群列表卡片里给出「启动 NapCat 服务」直通按钮（只建一次）。"""
+        btn = getattr(self, '_btn_goto_service', None)
+        if btn is not None:
+            btn.setVisible(True)
+            return
+        try:
+            btn = PushButton('启动 NapCat 服务')
+            btn.clicked.connect(self._goto_manual_and_start)
+            self._btn_goto_service = btn
+            lay = self.grp_status.parentWidget().layout()
+            if lay is not None:
+                lay.insertWidget(1, btn)
+        except Exception:
+            self._btn_goto_service = None
+
+    def _goto_manual_and_start(self) -> None:
+        """切到手动总结页并直接触发启动。"""
+        w = self.window()
+        if hasattr(w, 'switch_to'):
+            try:
+                w.switch_to('manual')
+            except Exception:
+                return
+        page = getattr(w, '_pages', {}).get('manual')
+        if page is not None and hasattr(page, 'start_service'):
+            try:
+                page.start_service()
+            except Exception:
+                pass
 
     def _render_groups(self) -> None:
         """按当前选择状态渲染群列表。"""

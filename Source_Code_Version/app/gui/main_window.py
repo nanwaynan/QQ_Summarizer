@@ -283,12 +283,43 @@ class MainWindow(QWidget):
     def _apply_theme(self) -> None:
         from ..theme import apply_saved_theme
         apply_saved_theme(self.config)
+        self.restyle_backgrounds()
 
     def apply_theme(self) -> None:
         """外部（设置页）调用以立即切换主题。"""
         self._apply_theme()
         # 调色板切换后，依赖窗口底色的控件需要重绘
+        self.restyle_backgrounds()
         self.update()
+
+    def restyle_backgrounds(self) -> None:
+        """按当前主题重刷本窗口与所有已加载页面的底色。
+
+        为什么需要：`CardWidget` 背景是半透明白，会透出父级底色；而
+        `QStackedWidget` / 页面 QWidget / `ScrollArea` 视口都是透明的，
+        最终透出主窗口的 `QPalette::Window`。只调 `setTheme()` 不改这些
+        中间层的实际底色，切换后就会「按钮变了、卡片和页面还是黑的」。
+        """
+        from ..theme import paint_bg
+
+        paint_bg(self)
+
+        for page in self._pages.values():
+            paint_bg(page)
+            # 滚动页面：视口和承载容器也要刷，否则内容区仍是深色
+            try:
+                from qfluentwidgets import ScrollArea
+                for sa in page.findChildren(ScrollArea):
+                    paint_bg(sa)
+                    vp = sa.viewport()
+                    if vp is not None:
+                        paint_bg(vp)
+                    inner = sa.widget()
+                    if inner is not None:
+                        paint_bg(inner)
+            except Exception:
+                pass
+            page.update()
 
     # ---------- 未保存提示 ----------
 
