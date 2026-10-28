@@ -28,6 +28,11 @@ for _name in ('app.ico', 'app_icon.png'):
     _p = ROOT / _name
     if _p.exists():
         datas.append((str(_p), '.'))
+# 内置的 NapCat 启动脚本（脚本损坏时用它覆盖修复）
+_data_dir = ROOT / 'app' / 'data'
+if _data_dir.is_dir():
+    datas.append((str(_data_dir), 'app/data'))
+
 try:
     datas += collect_data_files('qfluentwidgets', include_py_files=False)
 except Exception:

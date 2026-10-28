@@ -414,6 +414,110 @@ class NapCatService:
                 f'请确认该目录可写（不要放在 Program Files 下运行）。'
             ) from e
 
+    def _check_script_sanity(self) -> dict:
+        """检查启动脚本是否基本可用（存在、非空、可读）。
+
+        为什么需要：GUI 通过 `launch_hidden.vbs` 以**隐藏窗口**拉起 bat。
+        bat 一旦无法执行，cmd 的输出用户完全看不到 —— 表现就是
+        「双击没有任何反应」，程序也只能干等 180 秒再报「注入器没在运行」。
+        所以在启动前先确认脚本文件本身没问题，失败时立刻给出可读的错误。
+
+        这里**只做不会误判的检查**（存在性/大小/可读性）。
+        不做 bat 语法的静态解析 —— cmd 的块结构与转义规则太复杂，
+        靠正则猜容易把正常脚本判成坏的（实测就会误报）。
+
+        Returns:
+            {'ok': bool, 'reason': str, 'detail': str}
+        """
+        bat = self.start_bat
+        if not bat.exists():
+            return {'ok': False, 'reason': 'missing',
+                    'detail': f'找不到启动脚本：{bat}'}
+        try:
+            size = bat.stat().st_size
+        except OSError as e:
+            return {'ok': False, 'reason': 'unreadable', 'detail': str(e)}
+        if size < 200:
+            return {'ok': False, 'reason': 'too_small',
+                    'detail': f'启动脚本异常（仅 {size} 字节）：{bat}\n'
+                              f'文件不完整，请重新解压发布包。'}
+        try:
+            with open(bat, 'rb') as f:
+                f.read(64)
+        except OSError as e:
+            return {'ok': False, 'reason': 'unreadable', 'detail': str(e)}
+
+        return {'ok': True, 'reason': 'ok', 'detail': ''}
+
+    # 已知会「立刻崩溃」的 bat 特征。命中说明是 v1.0.2~v1.0.4 的坏脚本。
+    _BROKEN_BAT_MARKS = (
+        'if defined NAPCAT_FILE_URL (',
+        'if not defined NAPCAT_FILE_URL (',
+    )
+
+    def _repair_script_if_broken(self) -> bool:
+        """检测并修复已知的坏启动脚本。返回 True 表示做了修复。
+
+        背景：v1.0.4 给 `启动NapCat.bat` 加 URL 编码时，把
+        `echo (async () =^> ...)()` 写进了 `if (...)` 块，cmd 会在 echo
+        内容里的右括号处提前闭合语句块 → 脚本立刻退出。由于是通过隐藏窗口
+        拉起的，用户只会看到「双击没反应」。
+
+        这里在每次启动前检查 bat 是否命中这个坏特征；命中就用内置的
+        修复版（打包在 app/data/）覆盖。
+        """
+        bat = self.start_bat
+        if not bat.exists():
+            return False
+
+        try:
+            raw = bat.read_bytes()
+        except OSError:
+            return False
+
+        try:
+            text = raw.decode('gbk')
+        except UnicodeDecodeError:
+            text = raw.decode('latin-1', errors='replace')
+
+        if not any(m in text for m in self._BROKEN_BAT_MARKS):
+            return False
+
+        # 从打包资源里取修复版
+        src = self._bundled_script()
+        if src is None:
+            self._log('检测到启动脚本有已知缺陷，但找不到内置修复版，跳过替换')
+            return False
+
+        try:
+            # 先备份，方便出问题时回滚
+            backup = bat.with_suffix('.bat.broken')
+            if not backup.exists():
+                backup.write_bytes(raw)
+            bat.write_bytes(src)
+            self._log(f'已自动修复启动脚本（原文件备份为 {backup.name}）')
+            return True
+        except OSError as e:
+            self._log(f'自动修复启动脚本失败：{e}')
+            return False
+
+    def _bundled_script(self) -> bytes | None:
+        """读取打包进来的修复版启动脚本。"""
+        from ..resources import resource_dir
+
+        cands = [
+            resource_dir() / 'app' / 'data' / '启动NapCat.bat',
+            # 开发时（未打包）路径
+            Path(__file__).resolve().parent.parent / 'data' / '启动NapCat.bat',
+        ]
+        for p in cands:
+            try:
+                if p.exists():
+                    return p.read_bytes()
+            except OSError:
+                continue
+        return None
+
     def start(self, auto: bool = True) -> None:
         """启动 NapCat。
 
@@ -428,6 +532,18 @@ class NapCatService:
         bat = self.start_bat
         if not bat.exists():
             raise NapCatError(f'找不到启动脚本: {bat}')
+
+        # 已知缺陷脚本先自动替换，避免「双击没反应」的隐性故障
+        self._repair_script_if_broken()
+
+        # 检查脚本本身是否可用，失败时立刻报错，不要等 180 秒超时
+        sanity = self._check_script_sanity()
+        if not sanity['ok']:
+            raise NapCatError(
+                f'启动脚本有问题，无法执行：\n{sanity["detail"]}\n\n'
+                f'文件：{bat}\n'
+                f'这通常说明发布包不完整或脚本被改坏，请重新解压发布包。'
+            )
 
         # 先把 loadNapCat.js 写成正确的 file URL（中文/空格路径的关键修复）。
         # bat 内部也会重写这个文件，但它的实现不做 URL 编码，所以必须在这里

@@ -92,6 +92,16 @@ def main() -> int:
     if config_save_error:
         logger.error(f'配置保存失败：{config_save_error}')
 
+    # ---- 启动前自检：修复已知有缺陷的 NapCat 启动脚本 ----
+    # 放在这里而不是等用户点「启动服务」，这样一打开程序就把问题解决掉。
+    # v1.0.4 的 bat 有语法错误会让 NapCat 完全无法启动，且是隐藏窗口运行，
+    # 用户看不到任何报错，只会以为「点了没反应」。
+    try:
+        from app.core.napcat import NapCatService
+        NapCatService(config, logger.warn)._repair_script_if_broken()
+    except Exception as e:
+        logger.warn(f'启动脚本自检失败：{type(e).__name__}: {e}')
+
     # ---- 主题 ----
     from app.theme import apply_saved_theme
     apply_saved_theme(config)
