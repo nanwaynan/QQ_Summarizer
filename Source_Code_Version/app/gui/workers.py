@@ -232,9 +232,12 @@ class StartServiceWorker(WorkerBase):
                 text = PHASE_TEXT.get(phase, phase)
                 # 带上细节信息，便于界面提示
                 detail = dict(data) if isinstance(data, dict) else {}
-                if phase == 'starting' and detail.get('waited'):
-                    text = f'正在启动 NapCat（{detail["waited"]} 秒）...'
-                    self.progress.emit(text, min(0.4, detail['waited'] / 60))
+                # 注意 waited 可能是 0（刚起步那一刻），不能用真值判断，
+                # 否则第 0 秒会显示成别的文案（v1.0.6 修复）
+                if phase == 'starting' and 'waited' in detail:
+                    w = int(detail.get('waited') or 0)
+                    text = f'正在启动 NapCat（{w} 秒）...'
+                    self.progress.emit(text, min(0.4, w / 60))
                 elif phase == 'waiting_qrcode':
                     self.progress.emit(text, 0.5)
                 elif phase == 'qrcode_scanned':

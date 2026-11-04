@@ -178,13 +178,13 @@ class HelpPage(QWidget):
 
     def refresh(self) -> None:
         """刷新环境状态显示。"""
-        from ...core.qqversion import detect_qq, napcat_version
+        from ...core.qqversion import detect_qq, napcat_version, qq_version_status
 
         # QQ
         info = detect_qq()
         if info['installed']:
-            mark = '✓' if info['compatible'] else '⚠'
-            color = COLOR_SUCCESS if info['compatible'] else COLOR_WARN
+            mark = '✓' if info['compatible'] else '✗'
+            color = COLOR_SUCCESS if info['compatible'] else COLOR_ERROR
             self.env_qq.setText(f'{mark} QQ 客户端：{info["version"] or "未知版本"}')
             self.env_qq.setTextColor(*color)
         else:
@@ -214,6 +214,16 @@ class HelpPage(QWidget):
         if info['installed'] and info['compatible'] and (nv or nd):
             self.env_status.setText('环境就绪，可以开始使用')
             self.env_status.setTextColor(*COLOR_SUCCESS)
+        elif info['installed'] and not info['compatible']:
+            # QQ 版本不受支持是硬阻塞：注入会让 QQ 报「文件已损坏」。
+            # 直接把「支持的最高版本」和解决办法显出来。
+            st = qq_version_status(napcat_dir=nd or None)
+            top = st.get('max_supported') or ''
+            msg = info['message'].replace('\n', ' ')
+            if top:
+                msg += f'（内置 NapCat 支持最高 {top}，需降级 QQ 或更换 NapCat 内核）'
+            self.env_status.setText(msg)
+            self.env_status.setTextColor(*COLOR_ERROR)
         else:
             self.env_status.setText(info['message'].replace('\n', ' '))
             self.env_status.setTextColor(*COLOR_MUTED)

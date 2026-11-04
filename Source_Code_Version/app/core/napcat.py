@@ -79,6 +79,32 @@ class OneBotClient:
 
     # ---------- 状态检查 ----------
 
+    def port_open(self, timeout: float = 0.5) -> bool:
+        """快速探测 OneBot 端口是否在监听（不发起 HTTP 请求）。
+
+        为什么不用 HTTP 探测：连接被拒绝时 urllib 在 Windows 上仍会耗掉
+        接近整个 timeout（本机实测 1 秒左右），导致「每秒轮询」变成 2 秒一次，
+        界面秒数就成了 0、2、4…。直接连 TCP 端口，被拒绝会**立刻**返回。
+        """
+        import socket
+
+        try:
+            url = self.config.napcat_base
+            # 从 http://127.0.0.1:3000 里取出 host / port
+            rest = url.split('://', 1)[-1]
+            hostport = rest.split('/', 1)[0]
+            if ':' in hostport:
+                host, port_s = hostport.rsplit(':', 1)
+                port = int(port_s)
+            else:
+                host, port = hostport, 80
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            return False
+        except Exception:
+            return False
+
     def is_online(self, timeout: int = 5) -> bool:
         try:
             self.call('get_login_info', timeout=timeout)
@@ -579,19 +605,30 @@ class NapCatService:
         """轮询等待 NapCat 就绪（3000 端口可用）。
 
         on_progress(已等秒数, 总秒数)
+
+        用单调时钟计真实流逝时间（v1.0.6）。旧实现 `waited += interval`
+        有两个问题：① 秒数只按轮询次数递增，会显示成 2、4、6…；
+        ② 每轮还有请求耗时，计数器比真实时间慢，越等偏差越大。
         """
         client = OneBotClient(self.config)
-        waited = 0
-        while waited < timeout:
+        started = time.monotonic()
+        last = -1
+        # 端口探测用 TCP 直连（被拒绝会立刻返回），
+        # 不用 HTTP —— 后者在端口未监听时要耗满 timeout。
+        while True:
+            waited = int(time.monotonic() - started)
+            if waited >= timeout:
+                return False
             if self._should_cancel_stub():
                 return False
-            if client.is_online(timeout=3):
-                return True
-            time.sleep(interval)
-            waited += interval
-            if on_progress:
+            if on_progress and waited != last:
+                last = waited
                 on_progress(waited, timeout)
-        return False
+            if client.port_open(timeout=0.5):
+                # 端口通了，再用 HTTP 确认真的能应答
+                if client.is_online(timeout=3):
+                    return True
+            time.sleep(0.5)
 
     def _should_cancel_stub(self) -> bool:
         return False
@@ -756,6 +793,19 @@ class NapCatService:
         cancel = should_cancel or (lambda: False)
         webui = self.webui()
 
+        # ---- 0. 无条件校验 QQ 版本 ----
+        # 放在最前面：版本不受支持时注入会把 QQ 弄崩（弹「文件已损坏」），
+        # 无论服务当前在不在跑，都必须先拦住。
+        # 例外：如果服务已经在正常应答（已登录状态），说明之前注入成功过，
+        # 不必因为用户升级 QQ 就打断正在运行的服务。
+        phase_cb(PHASE_CHECKING, {})
+        if not webui.is_available(timeout=2):
+            verr = self._check_qq_version()
+            if verr:
+                phase_cb(PHASE_ERROR, {'error': verr})
+                return {'ok': False, 'phase': PHASE_ERROR, 'info': {},
+                        'error': verr}
+
         # ---- 1. 检查 WebUI 是否可达（登录前后都可访问）----
         phase_cb(PHASE_CHECKING, {})
         if not webui.is_available(timeout=3):
@@ -781,21 +831,36 @@ class NapCatService:
             # 内核注入、杀软扫描都可能耗时。实测新机器常见 30-90 秒，
             # 旧的 60 秒硬编码会导致「明明能起来但被判超时」。
             # 改为可配置（默认 180 秒），并在日志里给出进度反馈。
+            #
+            # 计时必须用真实流逝时间（v1.0.6 修复）：
+            # 以前是 `waited += poll_interval`，poll_interval=2.0，
+            # 于是界面上的秒数变成 2、4、6…，且比真实时间慢 ——
+            # 因为每轮循环实际耗时 = sleep(2) + webui.is_available(最多2秒)，
+            # 真实可能已过 4 秒而计数器只加了 2 秒。现在用 monotonic() 实测。
             boot_timeout = float(self.config.get('napcat_boot_timeout', 180) or 180)
             boot_timeout = max(30.0, min(600.0, boot_timeout))
-            waited = 0.0
+            started_at = time.monotonic()
             log_hint_shown = False
-            while waited < boot_timeout:
+            last_reported = -1
+            while True:
+                waited = time.monotonic() - started_at
+                if waited >= boot_timeout:
+                    break
                 if cancel():
                     phase_cb(PHASE_CANCELLED, {})
                     return {'ok': False, 'phase': PHASE_CANCELLED, 'info': {},
                             'error': '已取消'}
-                time.sleep(poll_interval)
-                waited += poll_interval
-                phase_cb(PHASE_STARTING, {'waited': int(waited),
-                                          'total': int(boot_timeout)})
+
+                # 每过 1 秒上报一次（而不是每个轮询周期报一次），
+                # 让界面秒数连续递增：1、2、3…
+                secs = int(waited)
+                if secs != last_reported:
+                    last_reported = secs
+                    phase_cb(PHASE_STARTING, {'waited': secs,
+                                              'total': int(boot_timeout)})
+
                 if webui.is_available(timeout=2):
-                    self._log(f'WebUI 已就绪（等待 {waited:.0f} 秒）')
+                    self._log(f'WebUI 已就绪（等待 {waited:.1f} 秒）')
                     break
 
                 # 等待过半仍没起来：读一下 bat 写的启动日志，
@@ -805,6 +870,9 @@ class NapCatService:
                     hint = self._launch_log_hint()
                     if hint:
                         self._log(f'  {hint}')
+
+                # 半秒一拍，配合单调时钟让秒数连续递增（1、2、3…）
+                time.sleep(0.5)
             else:
                 msg = self._diagnose_boot_timeout(boot_timeout)
                 phase_cb(PHASE_ERROR, {'error': msg})
@@ -855,6 +923,49 @@ class NapCatService:
                '或关闭 QQ 后重试。')
         phase_cb(PHASE_ERROR, {'error': msg})
         return {'ok': False, 'phase': PHASE_ERROR, 'info': {}, 'error': msg}
+
+    def _check_qq_version(self) -> str:
+        """启动前校验 QQ 版本是否被内置 NapCat 支持。
+
+        Returns:
+            空串表示可以继续；非空表示必须中止，内容是给用户看的完整说明。
+        """
+        try:
+            from .qqversion import qq_version_status
+            # deep=True：启动时一定要找到 QQ，哪怕装在非标准位置
+            st = qq_version_status(napcat_dir=self.napcat_dir, deep=True)
+        except Exception as e:
+            self._log(f'QQ 版本检测失败（跳过校验）：{type(e).__name__}: {e}')
+            return ''
+
+        if not st.get('installed'):
+            return ('未检测到 QQ 客户端。\n\n'
+                    '程序已尝试这些方式查找 QQ：\n'
+                    '  1. napcat_green\\qq_path.txt 里指定的路径\n'
+                    '  2. 环境变量 QQ_PATH\n'
+                    '  3. 正在运行的 QQ 进程\n'
+                    '  4. 注册表（64 位 / WOW6432Node / 用户级）\n'
+                    '  5. 开始菜单快捷方式\n'
+                    '  6. 各盘符常见安装目录\n'
+                    '  7. 全盘扫描 *\\QQNT\\QQ.exe\n\n'
+                    '解决办法（任选其一）：\n'
+                    '  · 先手动打开一次 QQ，再点「启动服务」（程序会从进程读到路径）\n'
+                    '  · 把 QQ.exe 拖到 napcat_green\\启动NapCat.bat 上（自动记录路径）\n'
+                    '  · 在本目录创建 napcat_green\\qq_path.txt，内容写 QQ.exe 完整路径\n\n'
+                    f'没装 QQ 的话去这里下载：https://im.qq.com/pcqq')
+
+        if st.get('supported'):
+            self._log(f'QQ 版本校验通过：{st["version"]}')
+            return ''
+
+        # 不支持 → 中止并给出可执行的解决路径
+        ver = st.get('version') or '未知'
+        self._log(f'QQ 版本不受支持：{ver}（NapCat 支持最高 '
+                  f'{st.get("max_supported") or "未知"}）')
+        return (f'{st.get("message")}\n\n'
+                f'{st.get("advice")}\n\n'
+                f'（如果 QQ 已经弹出「文件已损坏」，那是注入失败导致的，'
+                f'QQ 本身没坏，不用重装。）')
 
     def _diagnose_boot_timeout(self, boot_timeout: float) -> str:
         """超时后给出**具体**原因，而不是一串可能性。
@@ -1122,7 +1233,26 @@ class NapCatWebUI:
         """WebUI 是否可达（登录前后都可判断）。
 
         用根路径探测即可 —— 任何 HTTP 响应（含 401/404）都说明服务在跑。
+
+        先用 TCP 直连快速判断端口是否监听（端口没开时立刻返回，不耗满
+        timeout）；端口通了才发 HTTP 请求。这样轮询循环的节奏才准。
         """
+        import socket
+
+        # 1. 快速端口探测
+        try:
+            from urllib.parse import urlparse
+            u = urlparse(self.base)
+            host = u.hostname or '127.0.0.1'
+            port = u.port or (443 if u.scheme == 'https' else 80)
+            with socket.create_connection((host, port), timeout=min(0.5, timeout)):
+                pass
+        except OSError:
+            return False
+        except Exception:
+            return False
+
+        # 2. 端口通了，确认 HTTP 能应答
         try:
             with urllib.request.urlopen(self.base, timeout=timeout) as r:
                 return r.status < 500

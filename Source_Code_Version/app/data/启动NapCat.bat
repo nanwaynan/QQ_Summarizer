@@ -114,16 +114,39 @@ if not defined QQPath call :QRY_REG "HKLM\SOFTWARE\WOW6432Node\Microsoft\Windows
 REM --- 4.2b 用户级安装 ---
 if not defined QQPath call :QRY_REG "HKCU\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\QQ"
 
-REM --- 4.3 常见安装路径 ---
+REM --- 4.3 从正在运行的 QQ 进程取路径（最准）---
+REM QQ 开着时，不管装在哪，进程路径就是答案。
+if not defined QQPath (
+    for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Get-Process QQ -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Path)" 2^>nul`) do (
+        if exist "%%i" (
+            set "QQPath=%%i"
+            echo [OK] 从运行中的 QQ 进程找到
+        )
+    )
+)
+
+REM --- 4.4 开始菜单快捷方式（覆盖装在任意位置的情况）---
+if not defined QQPath (
+    for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "$sh=New-Object -ComObject WScript.Shell; Get-ChildItem -Path ([Environment]::GetFolderPath('CommonStartMenu')),([Environment]::GetFolderPath('StartMenu')) -Filter *QQ*.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $t=$sh.CreateShortcut($_.FullName).TargetPath; if($t -and (Test-Path $t)){ $t } } | Select-Object -First 1" 2^>nul`) do (
+        if exist "%%i" (
+            set "QQPath=%%i"
+            echo [OK] 从开始菜单快捷方式找到 QQ
+        )
+    )
+)
+
+REM --- 4.5 常见安装路径 ---
 if not defined QQPath (
     for %%p in (
         "%ProgramFiles%\Tencent\QQNT\QQ.exe"
         "%ProgramFiles(x86)%\Tencent\QQNT\QQ.exe"
         "%LOCALAPPDATA%\Programs\Tencent\QQNT\QQ.exe"
-        "D:\Program Files\Tencent\QQNT\QQ.exe"
+        "%APPDATA%\Tencent\QQNT\QQ.exe"
+        "C:\Tencent\QQNT\QQ.exe"
         "D:\Tencent\QQNT\QQ.exe"
-        "E:\Program Files\Tencent\QQNT\QQ.exe"
+        "D:\Program Files\Tencent\QQNT\QQ.exe"
         "E:\Tencent\QQNT\QQ.exe"
+        "E:\Program Files\Tencent\QQNT\QQ.exe"
     ) do (
         if exist %%p (
             set "QQPath=%%~p"
@@ -132,7 +155,33 @@ if not defined QQPath (
     )
 )
 
-REM --- 4.4 未找到：给出指引 ---
+REM --- 4.6 全盘通配扫描（最后一层兜底）---
+REM 只扫两层：X:\* \QQNT 和 X:\* \* \QQNT，避免遍历整盘
+if not defined QQPath (
+    for %%d in (C D E F G) do (
+        if not defined QQPath if exist "%%d:\" (
+            for /d %%a in ("%%d:\*") do (
+                if not defined QQPath if exist "%%~a\QQNT\QQ.exe" set "QQPath=%%~a\QQNT\QQ.exe"
+            )
+        )
+    )
+)
+if not defined QQPath (
+    for %%d in (C D E F G) do (
+        if not defined QQPath if exist "%%d:\" (
+            for /d %%a in ("%%d:\*") do (
+                if not defined QQPath (
+                    for /d %%b in ("%%~a\*") do (
+                        if not defined QQPath if exist "%%~b\QQNT\QQ.exe" set "QQPath=%%~b\QQNT\QQ.exe"
+                    )
+                )
+            )
+        )
+    )
+)
+if defined QQPath echo [OK] 通过全盘扫描找到 QQ
+
+REM --- 4.7 未找到：给出指引 ---
 if not defined QQPath (
     if defined AUTO_MODE (
         echo [错误] 未找到 QQ 客户端（详见 napcat_launch.log）
