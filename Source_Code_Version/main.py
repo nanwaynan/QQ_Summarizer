@@ -167,6 +167,51 @@ def main() -> int:
 
     app.aboutToQuit.connect(_cleanup)
 
+    # ---- 后台静默检查 NapCat 内核更新 ----
+    # QQ 会持续更新，内置内核会逐渐跟不上。启动后延迟 8 秒查一次
+    # （避免和启动流程抢网络），只在「确实有新版本」时提示一次。
+    # 用户可在设置页关掉自动更新。
+    def _check_kernel_bg() -> None:
+        if not config.get('napcat_auto_update', True):
+            return
+        try:
+            from app.core.napcat_update import fetch_latest, is_newer
+            from app.core.qqversion import qq_version_status
+
+            # 只有当前 QQ 版本不受支持时才主动提示（正常时不打扰）
+            st = qq_version_status(napcat_dir=None, deep=False)
+            if st.get('supported'):
+                return
+
+            rel = fetch_latest(timeout=20)
+            tag = rel.get('tag') or ''
+            if not tag or config.get('napcat_kernel_checked_tag') == tag:
+                return
+
+            logger.warn(f'检测到 NapCat 新内核 {tag}，当前 QQ {st.get("version")} '
+                        f'可能不受支持，可在「设置」页点「更新 NapCat 内核」')
+            config.set('napcat_kernel_checked_tag', tag)
+            try:
+                config.save()
+            except Exception:
+                pass
+            try:
+                tray.notify(
+                    '有新的 NapCat 内核可用',
+                    f'当前 QQ {st.get("version")} 可能不受支持。\n'
+                    f'到「设置」页点「更新 NapCat 内核」即可。',
+                    8000)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.info(f'后台内核检查跳过：{type(e).__name__}: {e}')
+
+    try:
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(8000, _check_kernel_bg)
+    except Exception:
+        pass
+
     rc = app.exec()
     return int(rc)
 

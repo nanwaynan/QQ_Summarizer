@@ -518,6 +518,14 @@ def supported_versions(napcat_dir: Path | None = None) -> list[str]:
     return sorted(found, key=_version_sort_key)
 
 
+def build_of(version: str) -> str:
+    """从 '9.9.37-261103' 里取出 build 号 '261103'。"""
+    if not version:
+        return '（未知）'
+    m = re.search(r'-(\d+)$', str(version))
+    return m.group(1) if m else str(version)
+
+
 def _version_sort_key(v: str) -> tuple:
     """把 '9.9.36-53644' 变成可排序的元组。"""
     m = re.match(r'^(\d+)\.(\d+)\.(\d+)-(\d+)$', v)

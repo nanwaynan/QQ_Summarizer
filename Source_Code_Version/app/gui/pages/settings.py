@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup, QFileDialog, QFormLayout, QHBoxLayout, QListWidget,
@@ -23,6 +25,7 @@ from qfluentwidgets import (
 )
 
 from ...config import Config, mask_key
+from ...constants import COLOR_MUTED, COLOR_SUCCESS
 from ...logger import Logger
 from ..workers import (
     LoadAccountsWorker, LoadGroupsWorker, SwitchAccountWorker, TestAIWorker,
@@ -228,6 +231,36 @@ class SettingsPage(QWidget):
         self.in_boot_timeout.setPlaceholderText('180')
         misc_form.addRow(self._form_label('NapCat 启动超时（秒）'), self.in_boot_timeout)
 
+        # ---- NapCat 内核更新（保证跟得上 QQ 版本）----
+        # QQ 会持续更新，NapCat 靠内存偏移注入，每个 QQ 版本都要对应偏移表。
+        # 内置内核会过时，所以提供「一键更新内核」+ 自动更新开关。
+        kc_row = QHBoxLayout()
+        self.btn_update_kernel = PushButton('更新 NapCat 内核')
+        self.btn_update_kernel.clicked.connect(self.update_kernel)
+        kc_row.addWidget(self.btn_update_kernel)
+        self.btn_check_kernel = PushButton('检查新版本')
+        self.btn_check_kernel.clicked.connect(self.check_kernel)
+        kc_row.addWidget(self.btn_check_kernel)
+        kc_row.addStretch(1)
+        kc_wrap = QWidget()
+        kc_wrap.setLayout(kc_row)
+        misc_form.addRow(self._form_label('NapCat 内核'), kc_wrap)
+
+        self.kernel_hint = CaptionLabel('')
+        self.kernel_hint.setWordWrap(True)
+        misc_form.addRow('', self.kernel_hint)
+
+        self.sw_auto_update = SwitchButton()
+        self.sw_auto_update.setOnText('自动')
+        self.sw_auto_update.setOffText('手动')
+        misc_form.addRow(self._form_label('内核自动更新'), self.sw_auto_update)
+
+        self.auto_update_hint = CaptionLabel(
+            '开启后：QQ 版本不受支持时，程序会自动从 NapCat 官方下载最新内核并安装。'
+            '更新前会备份旧内核，失败自动回滚，不影响你的账号配置。')
+        self.auto_update_hint.setWordWrap(True)
+        misc_form.addRow('', self.auto_update_hint)
+
         # 总结模式：两个选项同时可见，比下拉框直观
         mode_row = QHBoxLayout()
         mode_row.setSpacing(16)
@@ -335,9 +368,143 @@ class SettingsPage(QWidget):
         self.in_boot_timeout.setText(str(c.get('napcat_boot_timeout', 180) or 180))
         self._refresh_ng_hint()
 
+        # 内核自动更新开关 + 当前内核信息
+        self.sw_auto_update.setChecked(bool(c.get('napcat_auto_update', True)))
+        self._refresh_kernel_hint()
+
         # 记录"已保存状态"的快照，用于判断有没有未保存的修改
         self._saved_snapshot = self._current_snapshot()
         self._dirty = False
+
+    # ---------- NapCat 内核 ----------
+
+    def _refresh_kernel_hint(self) -> None:
+        """显示当前内核支持的 QQ 版本范围。"""
+        try:
+            from ...core.napcat_update import local_versions
+            d = str(self.config.get('napcat_dir') or '')
+            info = local_versions(Path(d))
+        except Exception as e:
+            self.kernel_hint.setText(f'无法读取内核信息：{e}')
+            return
+
+        if not info['exists']:
+            self.kernel_hint.setText('⚠ NapCat 目录不存在，请先在上方填写正确目录')
+            self.kernel_hint.setTextColor('#c42b1c', '#ff99a4')
+            return
+
+        if not info['max_qq']:
+            self.kernel_hint.setText('⚠ 无法读取内核支持的 QQ 版本（文件可能不完整）')
+            self.kernel_hint.setTextColor('#c42b1c', '#ff99a4')
+            return
+
+        self.kernel_hint.setText(
+            f'当前内核支持 {len(info["qq_versions"])} 个 QQ 版本，'
+            f'最高 {info["max_qq"]}。QQ 更新后可点「更新 NapCat 内核」。')
+        self.kernel_hint.setTextColor(*COLOR_MUTED)
+
+    def check_kernel(self) -> None:
+        """检查 NapCat 是否有新内核（不下载）。"""
+        from ..workers import CheckKernelWorker
+
+        self.btn_check_kernel.setEnabled(False)
+        self.kernel_hint.setText('正在查询 NapCat 最新版本...')
+
+        w = CheckKernelWorker(str(self.config.get('napcat_dir') or ''))
+        self._workers['check_kernel'] = w
+
+        def _ok(data: object) -> None:
+            d = data if isinstance(data, dict) else {}
+            latest = d.get('latest', '')
+            now_max = d.get('max_qq_now', '')
+            size = (d.get('asset_size') or 0) / 1024 / 1024
+            self.kernel_hint.setText(
+                f'最新内核：{latest}（{size:.0f} MB）；'
+                f'当前内核支持最高 QQ {now_max or "未知"}。\n'
+                f'点「更新 NapCat 内核」安装。')
+            self.kernel_hint.setTextColor(*COLOR_SUCCESS)
+
+        def _fail(msg: str) -> None:
+            self.kernel_hint.setText(f'检查失败：{msg[:120]}')
+            self.kernel_hint.setTextColor('#c42b1c', '#ff99a4')
+
+        w.finished_ok.connect(_ok)
+        w.failed.connect(_fail)
+        w.done.connect(lambda: self.btn_check_kernel.setEnabled(True))
+        w.start()
+
+    def update_kernel(self) -> None:
+        """下载并安装最新 NapCat 内核（带进度与回滚）。"""
+        from qfluentwidgets import MessageBox
+        from ..workers import UpdateKernelWorker
+
+        nd = str(self.config.get('napcat_dir') or '').strip()
+        if not nd:
+            InfoBar.warning('未配置目录', '请先填写 NapCat 目录',
+                            duration=3000, position=InfoBarPosition.TOP,
+                            parent=self)
+            return
+
+        box = MessageBox(
+            '更新 NapCat 内核',
+            '将从 NapCat 官方 GitHub 下载最新内核并替换当前内核。\n\n'
+            '· 更新前会自动备份（保留最近 3 份）\n'
+            '· 失败会自动回滚\n'
+            '· 你的账号配置（config 目录）不会被覆盖\n\n'
+            '需要联网，约 35 MB。是否继续？',
+            self.window())
+        box.yesButton.setText('开始更新')
+        box.cancelButton.setText('取消')
+        if not box.exec():
+            return
+
+        self.btn_update_kernel.setEnabled(False)
+        self.btn_check_kernel.setEnabled(False)
+        self.kernel_hint.setText('正在更新内核...')
+
+        w = UpdateKernelWorker(self.config, nd, install=True)
+        self._workers['update_kernel'] = w
+
+        w.log.connect(lambda lvl, msg: self.kernel_hint.setText(msg))
+        w.progress.connect(lambda msg, pct: self.kernel_hint.setText(msg))
+
+        def _ok(data: object) -> None:
+            d = data if isinstance(data, dict) else {}
+            if d.get('updated'):
+                self.kernel_hint.setText(
+                    f'✓ 已更新到 {d.get("latest")}，'
+                    f'支持 QQ 最高 {d.get("max_qq_after")}。')
+                self.kernel_hint.setTextColor(*COLOR_SUCCESS)
+                InfoBar.success(
+                    '内核已更新',
+                    f'{d.get("latest")} · 支持 QQ 最高 {d.get("max_qq_after")}',
+                    duration=5000, position=InfoBarPosition.TOP_RIGHT,
+                    parent=self)
+            else:
+                self.kernel_hint.setText('已是最新内核，无需更新')
+                self.kernel_hint.setTextColor(*COLOR_SUCCESS)
+            self._refresh_kernel_hint()
+            # 内核变了，重新检测 QQ 兼容性
+            try:
+                from ...core.qqversion import detect_qq
+                detect_qq(deep=False)
+            except Exception:
+                pass
+
+        def _fail(msg: str) -> None:
+            self.kernel_hint.setText(f'更新失败：{msg[:200]}')
+            self.kernel_hint.setTextColor('#c42b1c', '#ff99a4')
+            InfoBar.error('内核更新失败', msg[:250], duration=8000,
+                          position=InfoBarPosition.TOP_RIGHT, parent=self)
+
+        def _finish() -> None:
+            self.btn_update_kernel.setEnabled(True)
+            self.btn_check_kernel.setEnabled(True)
+
+        w.finished_ok.connect(_ok)
+        w.failed.connect(_fail)
+        w.done.connect(_finish)
+        w.start()
 
     # ---------- 未保存检测 ----------
 
@@ -359,6 +526,7 @@ class SettingsPage(QWidget):
             theme_idx,
             self.in_napcat_dir.text().strip(),
             self.in_boot_timeout.text().strip(),
+            self.sw_auto_update.isChecked(),
             tuple(sorted(self._selected_groups)),
             self.acc_combo.currentIndex() if self._accounts else -1,
         )
@@ -458,6 +626,9 @@ class SettingsPage(QWidget):
             c.set('napcat_boot_timeout', max(30, min(600, bt)))
         except ValueError:
             c.set('napcat_boot_timeout', 180)
+
+        # 内核自动更新开关
+        c.set('napcat_auto_update', self.sw_auto_update.isChecked())
 
         # 群选择：选中项写入 group_ids，第一个同步到 group_id/group_name
         ids = sorted(self._selected_groups)

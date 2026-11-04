@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import traceback
+from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, QThread, Signal
@@ -454,5 +455,97 @@ class SwitchAccountWorker(WorkerBase):
             self.finished_ok.emit(client.login_info())
         except Exception as e:
             self.failed.emit(str(e))
+        finally:
+            self.done.emit()
+
+
+class UpdateKernelWorker(WorkerBase):
+    """检查并更新 NapCat 内核。
+
+    用于「设置」页的手动更新，以及启动时的后台检查。
+
+    Signals:
+        check_done(dict) : 仅检查模式的结果
+    """
+
+    check_done = Signal(object)
+
+    def __init__(self, config: Config, napcat_dir: str,
+                 install: bool = True, parent: QObject | None = None):
+        super().__init__(None, parent)
+        self.config = config
+        self.napcat_dir = napcat_dir
+        self.install = install
+
+    def run(self) -> None:
+        try:
+            from ..core.napcat_update import UpdateError, update_to_latest
+
+            def _stage(msg: str) -> None:
+                self.log.emit('INFO', msg)
+                self.progress.emit(msg, 0.0)
+
+            def _bytes(got: int, total: int) -> None:
+                if total > 0:
+                    pct = min(0.95, got / total)
+                    mb = got / 1024 / 1024
+                    tmb = total / 1024 / 1024
+                    self.progress.emit(f'下载中 {mb:.1f}/{tmb:.1f} MB', pct)
+
+            res = update_to_latest(
+                Path(self.napcat_dir),
+                on_stage=_stage,
+                on_bytes=_bytes,
+                should_cancel=self.should_cancel,
+                install=self.install,
+            )
+
+            if not res.get('ok'):
+                if res.get('cancelled'):
+                    self.failed.emit('已取消')
+                else:
+                    self.failed.emit(str(res.get('error') or '更新失败'))
+                return
+
+            if not self.install:
+                self.check_done.emit(res)
+                self.finished_ok.emit(res)
+                return
+
+            if res.get('updated'):
+                # 更新成功后清掉「已提示过」的标记，允许下次再检查
+                self.config.set('napcat_kernel_checked_tag', '')
+                self.finished_ok.emit(res)
+            else:
+                self.finished_ok.emit(res)
+        except Exception as e:
+            self.failed.emit(f'{type(e).__name__}: {e}')
+        finally:
+            self.done.emit()
+
+
+class CheckKernelWorker(WorkerBase):
+    """静默检查是否有新内核（不做下载）。"""
+
+    def __init__(self, napcat_dir: str, parent: QObject | None = None):
+        super().__init__(None, parent)
+        self.napcat_dir = napcat_dir
+
+    def run(self) -> None:
+        try:
+            from ..core.napcat_update import (
+                fetch_latest, local_versions,
+            )
+            rel = fetch_latest(timeout=20)
+            local = local_versions(Path(self.napcat_dir))
+            self.finished_ok.emit({
+                'latest': rel['tag'],
+                'published': rel['published'],
+                'html_url': rel['html_url'],
+                'asset_size': rel['asset_size'],
+                'max_qq_now': local['max_qq'],
+            })
+        except Exception as e:
+            self.failed.emit(f'{type(e).__name__}: {e}')
         finally:
             self.done.emit()
