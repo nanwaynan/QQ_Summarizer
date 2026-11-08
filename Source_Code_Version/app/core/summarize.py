@@ -44,6 +44,8 @@ class SummarizeResult:
     cancelled: bool = False
     # 非致命警告（如：模型不支持图片，图片甄选未生效）
     image_warning: str = ''
+    # 转发/语音富化统计（expand_forward / transcribe_voice）
+    enrich_stats: dict = field(default_factory=dict)
 
 
 class SummarizeTask:
@@ -113,7 +115,41 @@ class SummarizeTask:
                 self._log('  区间内没有消息，结束')
                 return res
 
-            transcript, valid_count = img_mod.build_transcript(msgs)
+            # ---- 1.5 富化：展开折叠转发、语音转文字 ----
+            # 必须在生成 transcript 之前做完（会联网），
+            # render_text 之后就是纯本地操作了。
+            renderer = None
+            enricher = None
+            try:
+                from .enrich import Enricher
+
+                expand_fwd = bool(cfg.get('expand_forward', True))
+                trans_voice = bool(cfg.get('transcribe_voice', False))
+
+                if expand_fwd or trans_voice:
+                    self._progress('展开转发与语音', 0.1)
+                    self._check_cancel()
+                    enricher = Enricher(
+                        client.call,
+                        log=self._log,
+                        expand_forward=expand_fwd,
+                        transcribe_voice=trans_voice,
+                        should_cancel=self._cancel,
+                    )
+                    enricher.prepare(msgs)
+                    renderer = enricher.render_text
+
+                    # 富化统计写进日志，便于用户判断是否生效
+                    st = enricher.stats
+                    if st['forward_expanded'] or st['voice_transcribed']:
+                        res.enrich_stats = dict(st)
+            except Exception as e:
+                # 富化失败不能影响主流程，退回占位文字
+                self._log(f'  ⚠ 转发/语音富化失败，按占位文字继续：'
+                          f'{type(e).__name__}: {str(e)[:100]}')
+                renderer = None
+
+            transcript, valid_count = img_mod.build_transcript(msgs, renderer)
             res.message_count = len(msgs)
             res.valid_count = valid_count
             self._log(f'  拉到 {len(msgs)} 条消息，有效发言 {valid_count} 条，'
@@ -150,7 +186,7 @@ class SummarizeTask:
             elif cfg.get('save_images', True):
                 self._progress('处理群内图片', 0.15)
                 saved_imgs = self._process_images(
-                    ai, msgs, folder, group_name, res)
+                    ai, msgs, folder, group_name, res, renderer=renderer)
 
             # ---- 3. AI 总结 ----
             self._progress('AI 总结中', 0.55)
@@ -230,13 +266,14 @@ class SummarizeTask:
     # ---------- 图片子流程 ----------
 
     def _process_images(self, ai: AIClient, msgs: list[dict], folder: Path,
-                        group_name: str, res: SummarizeResult) -> list[dict]:
+                        group_name: str, res: SummarizeResult,
+                        renderer=None) -> list[dict]:
         import shutil as _sh
         import time as _t
         cfg = self.config
         t_img = _t.time()
 
-        cands = img_mod.collect_images(msgs)
+        cands = img_mod.collect_images(msgs, renderer=renderer)
         self._log(f'[图片] 候选 {len(cands)} 张（已去重、跳过表情包）')
         if not cands:
             self._log('  没有需要保存的图片')

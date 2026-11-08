@@ -28,9 +28,17 @@ for _name in ('app.ico', 'app_icon.png'):
     _p = ROOT / _name
     if _p.exists():
         datas.append((str(_p), '.'))
-# 内置的 NapCat 启动脚本（脚本损坏时用它覆盖修复）
+# 内置的 NapCat 启动脚本（程序检测到发布包里的脚本损坏时用它覆盖修复）
+# 注意：这个文件必须和发布包 napcat_green/启动NapCat.bat 保持一致，
+# 否则自动修复会用旧版本覆盖新版本，把修复撤销掉。
 _data_dir = ROOT / 'app' / 'data'
 if _data_dir.is_dir():
+    _bat_tpl = _data_dir / '启动NapCat.bat'
+    if _bat_tpl.is_file():
+        _size_kb = _bat_tpl.stat().st_size / 1024
+        print(f'[spec] 内置启动脚本: {_bat_tpl.name} ({_size_kb:.1f} KB)')
+        if _size_kb < 5:
+            print('[spec] !!! 警告：内置启动脚本过小，可能不是完整版本')
     datas.append((str(_data_dir), 'app/data'))
 
 try:
@@ -47,6 +55,9 @@ _icon_arg = str(_icon) if _icon.exists() else None
 # 运行时动态导入的模块（懒加载页面等）
 
 hiddenimports = [
+    # 运行时动态导入的模块（函数内 import），静态分析看不到
+    'app.core.enrich',
+    'app.core.napcat_update',
     'app.gui.pages.manual',
     'app.gui.pages.auto',
     'app.gui.pages.settings',

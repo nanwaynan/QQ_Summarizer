@@ -49,11 +49,19 @@ def sender_name(msg: dict) -> str:
     return str(s.get('card') or s.get('nickname') or msg.get('user_id') or '未知')
 
 
-def build_transcript(msgs: list[dict]) -> tuple[str, int]:
-    """生成 '[时间] 昵称: 内容' 的逐行记录。"""
+def build_transcript(msgs: list[dict],
+                     renderer: Callable[[dict], str] | None = None,
+                     ) -> tuple[str, int]:
+    """生成 '[时间] 昵称: 内容' 的逐行记录。
+
+    Args:
+        renderer: 可选的自定义文本渲染函数（用于展开折叠转发、语音转文字）。
+                  不传时退回 extract_text（只出占位符）。
+    """
+    render = renderer or extract_text
     lines: list[str] = []
     for m in msgs:
-        text = extract_text(m)
+        text = render(m)
         if not text:
             continue
         ts = dt.datetime.fromtimestamp(m.get('time', 0)).strftime('%m-%d %H:%M')
@@ -70,16 +78,22 @@ def count_messages(msgs: list[dict]) -> tuple[int, int]:
 # ---------- 图片候选 ----------
 
 def collect_images(msgs: list[dict], min_bytes: int = MIN_IMAGE_BYTES,
+                   renderer: Callable[[dict], str] | None = None,
                    ) -> list[dict]:
     """收集候选图片，附上下文（供 AI 甄选）。
 
     - 只保留 sub_type=0 的普通图片（跳过动画表情/贴纸）
     - 按 file（MD5）去重
     - 记录该图前后各 2 条消息的文字作为上下文
+
+    Args:
+        renderer: 可选的自定义文本渲染（展开折叠转发、语音转文字），
+                  让图片上下文更贴合真实语义。
     """
+    render = renderer or extract_text
     lines_by_idx: dict[int, str] = {}
     for i, m in enumerate(msgs):
-        t = extract_text(m)
+        t = render(m)
         if t:
             ts = dt.datetime.fromtimestamp(m.get('time', 0)).strftime('%H:%M')
             lines_by_idx[i] = f'{sender_name(m)}: {t[:120]}'
@@ -121,7 +135,7 @@ def collect_images(msgs: list[dict], min_bytes: int = MIN_IMAGE_BYTES,
                 'size': size,
                 'time': ts,
                 'sender': name,
-                'text': extract_text(m),
+                'text': render(m),
                 'ctx_before': ctx_before,
                 'ctx_after': ctx_after,
             })

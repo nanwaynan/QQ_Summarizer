@@ -141,6 +141,10 @@ DEFAULTS: dict[str, Any] = {
     'napcat_webui': 'http://127.0.0.1:6099',
     'napcat_boot_timeout': 180,     # 等 NapCat 启动的上限（秒），新机器首次可能较慢
     'napcat_auto_update': True,     # QQ 版本不支持时自动更新 NapCat 内核
+
+    # 消息富化（内容解析）
+    'expand_forward': True,         # 展开折叠转发，把里面的内容读进总结
+    'transcribe_voice': True,       # 语音转文字（用 NapCat 的 fetch_ptt_text）
     'napcat_kernel_checked_tag': '', # 已提示过的新内核版本（避免每次启动都提示）
 
     # 输出

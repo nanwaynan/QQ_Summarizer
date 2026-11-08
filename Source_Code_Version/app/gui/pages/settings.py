@@ -301,6 +301,29 @@ class SettingsPage(QWidget):
         self.rb_mode_text.toggled.connect(self._on_mode_changed)
         self._on_mode_changed(self.rb_mode_text.isChecked())
 
+        # ---- 消息内容解析（折叠转发 / 语音）----
+        self.sw_expand_fwd = SwitchButton()
+        self.sw_expand_fwd.setOnText('开启')
+        self.sw_expand_fwd.setOffText('关闭')
+        misc_form.addRow(self._form_label('展开折叠转发'), self.sw_expand_fwd)
+
+        self.expand_fwd_hint = CaptionLabel(
+            '开启后，群里「合并转发」的内容会被展开读进总结，'
+            '而不是只记下四个字。支持多层嵌套转发。')
+        self.expand_fwd_hint.setWordWrap(True)
+        misc_form.addRow('', self.expand_fwd_hint)
+
+        self.sw_trans_voice = SwitchButton()
+        self.sw_trans_voice.setOnText('开启')
+        self.sw_trans_voice.setOffText('关闭')
+        misc_form.addRow(self._form_label('语音转文字'), self.sw_trans_voice)
+
+        self.trans_voice_hint = CaptionLabel(
+            '开启后，语音消息会调用 QQ 自带的语音转文字，把文字读进总结。'
+            '转不出来的语音会显示成「[语音]」，不影响其他内容。')
+        self.trans_voice_hint.setWordWrap(True)
+        misc_form.addRow('', self.trans_voice_hint)
+
         self.cmb_theme = ComboBox()
         self.cmb_theme.addItems(['跟随系统', '浅色', '深色'])
         misc_form.addRow(self._form_label('主题'), self.cmb_theme)
@@ -370,6 +393,10 @@ class SettingsPage(QWidget):
 
         # 内核自动更新开关 + 当前内核信息
         self.sw_auto_update.setChecked(bool(c.get('napcat_auto_update', True)))
+
+        # 消息内容解析开关
+        self.sw_expand_fwd.setChecked(bool(c.get('expand_forward', True)))
+        self.sw_trans_voice.setChecked(bool(c.get('transcribe_voice', True)))
         self._refresh_kernel_hint()
 
         # 记录"已保存状态"的快照，用于判断有没有未保存的修改
@@ -527,6 +554,8 @@ class SettingsPage(QWidget):
             self.in_napcat_dir.text().strip(),
             self.in_boot_timeout.text().strip(),
             self.sw_auto_update.isChecked(),
+            self.sw_expand_fwd.isChecked(),
+            self.sw_trans_voice.isChecked(),
             tuple(sorted(self._selected_groups)),
             self.acc_combo.currentIndex() if self._accounts else -1,
         )
@@ -629,6 +658,10 @@ class SettingsPage(QWidget):
 
         # 内核自动更新开关
         c.set('napcat_auto_update', self.sw_auto_update.isChecked())
+
+        # 消息内容解析开关
+        c.set('expand_forward', self.sw_expand_fwd.isChecked())
+        c.set('transcribe_voice', self.sw_trans_voice.isChecked())
 
         # 群选择：选中项写入 group_ids，第一个同步到 group_id/group_name
         ids = sorted(self._selected_groups)
