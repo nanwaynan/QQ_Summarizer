@@ -70,6 +70,59 @@ BACKUP_DIR_NAME = '_napcat_backup'
 UA = 'QQSummarizer-NapCatUpdater/1.0'
 
 
+# ---------- SSL 上下文 ----------
+
+_ssl_ctx = None
+
+
+def ssl_context():
+    """构造带 CA 证书的 SSL 上下文。
+
+    为什么必须自己做：PyInstaller 打包后，Python 的 `ssl` 找不到系统证书库，
+    而项目又不依赖 `certifi`（requirements 里刻意只用标准库）。结果是
+    **打包后的程序所有 HTTPS 请求都报 CERTIFICATE_VERIFY_FAILED** ——
+    表现为「查询 NapCat 版本失败」，用户看到的却是「QQ 版本不受支持」。
+
+    解决办法：把 cacert.pem 随程序打包（app/data/），运行时显式加载。
+    """
+    global _ssl_ctx
+    if _ssl_ctx is not None:
+        return _ssl_ctx
+
+    import ssl as _ssl
+
+    candidates = []
+    try:
+        from ..resources import resource_dir
+        candidates.append(resource_dir() / 'app' / 'data' / 'cacert.pem')
+    except Exception:
+        pass
+    candidates.append(Path(__file__).resolve().parent.parent / 'data' / 'cacert.pem')
+    candidates.append(Path('/etc/ssl/certs/ca-certificates.crt'))
+
+    for p in candidates:
+        try:
+            if p.is_file() and p.stat().st_size > 1000:
+                _ssl_ctx = _ssl.create_default_context(cafile=str(p))
+                return _ssl_ctx
+        except Exception:
+            continue
+
+    try:
+        _ssl_ctx = _ssl.create_default_context()
+    except Exception:
+        _ssl_ctx = None
+    return _ssl_ctx
+
+
+def _open(req, timeout: int):
+    """统一的 urlopen 包装（自动带 CA 证书）。"""
+    ctx = ssl_context()
+    if ctx is not None:
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
 class UpdateError(Exception):
     """更新失败（消息可直接展示给用户）。"""
 
@@ -94,7 +147,7 @@ def fetch_latest(timeout: int = 25) -> dict:
         headers={'Accept': 'application/vnd.github+json', 'User-Agent': UA},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _open(req, timeout) as r:
             d = json.loads(r.read().decode('utf-8', errors='replace'))
     except urllib.error.HTTPError as e:
         raise UpdateError(f'查询 NapCat 版本失败：HTTP {e.code}') from e
@@ -255,7 +308,7 @@ def _probe_speed(url: str, seconds: int = 5,
     t0 = time.monotonic()
     got = 0
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with _open(req, 10) as r:
             while time.monotonic() - t0 < seconds:
                 if cancel():
                     return 0
@@ -305,7 +358,7 @@ def download(url: str, dest: Path,
         t_start = time.monotonic()
         got = have
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with _open(req, timeout) as r:
                 # 断点续传失败（服务端不支持 Range）→ 从头来
                 if have and r.status != 206:
                     have, got = 0, 0

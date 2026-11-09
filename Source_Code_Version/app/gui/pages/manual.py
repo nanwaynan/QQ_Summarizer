@@ -270,6 +270,8 @@ class ManualPage(QWidget):
         self.btn_login.setEnabled(False)
         self.status_label.setText('正在启动服务...')
         self._append_log('INFO', '开始启动 NapCat 服务')
+        # 新一轮启动：重置错误去重标记，让同样的错误能再提示一次
+        self._last_error_key = ''
 
         w = StartServiceWorker(self.config)
         self._start_worker = w
@@ -297,10 +299,9 @@ class ManualPage(QWidget):
                          'generating_qrcode') and self._qr_dialog is None:
                 self._open_qr_dialog()
 
-            if phase == 'error':
-                InfoBar.error('启动失败', str(d.get('error') or text)[:250],
-                              duration=8000, position=InfoBarPosition.TOP_RIGHT,
-                              parent=self)
+            # 注意：这里只更新状态，不弹提示。
+            # worker 在 phase=error 之后还会发 failed 信号，
+            # 两处都弹会出现两个一模一样的错误框（v1.0.8 修复）。
 
         w.phase.connect(_on_phase)
         w.finished_ok.connect(self._on_start_finished)
@@ -330,10 +331,25 @@ class ManualPage(QWidget):
         self.check_service()
 
     def _on_start_failed(self, msg: str) -> None:
+        """启动失败：日志记全文，弹窗给足信息但不刷屏。"""
         self._append_log('ERROR', msg)
         self._set_dot('error')
-        InfoBar.error('启动失败', msg[:250], duration=8000,
-                      position=InfoBarPosition.TOP_RIGHT, parent=self)
+        # 错误信息往往带解决步骤，250 字会截掉关键部分（v1.0.8 放宽到 600）
+        self._show_error_once(msg)
+
+    def _show_error_once(self, msg: str) -> None:
+        """同一个错误只弹一次（worker 可能重复上报同一原因）。"""
+        key = str(msg)[:120]
+        if getattr(self, '_last_error_key', '') == key:
+            return
+        self._last_error_key = key
+
+        InfoBar.error(
+            '启动失败',
+            str(msg)[:600],
+            duration=-1,          # -1 = 不自动消失，用户看完自己关
+            position=InfoBarPosition.TOP,
+            parent=self)
 
     def _on_start_done(self) -> None:
         self.btn_start_service.setEnabled(True)

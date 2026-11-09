@@ -924,6 +924,52 @@ class NapCatService:
         phase_cb(PHASE_ERROR, {'error': msg})
         return {'ok': False, 'phase': PHASE_ERROR, 'info': {}, 'error': msg}
 
+    def _try_update_kernel_detail(self, cur_version: str) -> tuple[bool, str]:
+        """尝试更新内核，返回 (是否真的更新成功, 失败原因)。
+
+        与 `_try_update_kernel` 的区别：这里不判断「新内核是否支持当前 QQ」，
+        只回答「内核有没有成功换成新版」。因为两者失败含义完全不同：
+          - 更新失败（网络/SSL）→ 用户该去修网络，不是 QQ 版本问题
+          - 更新成功但不支持   → 只能等 NapCat 适配，或降 QQ 版本
+
+        Returns:
+            (True, '')                 更新成功（内核已换）
+            (False, '具体失败原因')     没更新成
+        """
+        try:
+            from .napcat_update import UpdateError, update_to_latest
+        except Exception as e:
+            return False, f'自动更新模块不可用：{type(e).__name__}: {e}'
+
+        self._log(f'当前内核不支持 QQ {cur_version}，尝试自动更新 NapCat 内核...')
+
+        def _stage(msg: str) -> None:
+            self._log(f'  {msg}')
+
+        try:
+            res = update_to_latest(self.napcat_dir, on_stage=_stage)
+        except UpdateError as e:
+            self._log(f'  自动更新失败：{e}')
+            return False, str(e)
+        except Exception as e:
+            self._log(f'  自动更新异常：{type(e).__name__}: {e}')
+            return False, f'{type(e).__name__}: {e}'
+
+        if not res.get('ok'):
+            err = str(res.get('error') or '未知原因')
+            self._log(f'  自动更新失败：{err}')
+            return False, err
+
+        if res.get('updated'):
+            self._log(f'  内核已更新到 {res.get("latest")}'
+                      f'（支持 QQ 最高 {res.get("max_qq_after")}）')
+            return True, ''
+
+        # 没更新 = 服务端没有更新版本，也算「更新成功」（已是最新）
+        self._log(f'  已是最新内核（{res.get("latest")}），无需更新')
+        return True, ''
+
+
     def _try_update_kernel(self, cur_version: str) -> bool:
         """QQ 版本不受支持时，尝试自动更新 NapCat 内核。
 
@@ -1015,18 +1061,25 @@ class NapCatService:
         self._log(f'QQ 版本不受支持：{ver}（当前内核支持最高 '
                   f'{st.get("max_supported") or "未知"}）')
 
+        # 自动更新内核，并记录**到底成没成**
+        # 必须区分三种结果，否则会给出误导性结论：
+        #   A. 更新成功且支持该 QQ  -> 继续启动
+        #   B. 更新成功但仍不支持   -> 内核不够新（等 NapCat 适配）
+        #   C. 更新失败（网络/SSL） -> 没测到新内核，不能下结论
+        update_ok = False
+        update_err = ''
         auto_update = bool(self.config.get('napcat_auto_update', True))
-        if auto_update and self._try_update_kernel(ver):
-            # 更新后复查
-            try:
-                from .qqversion import qq_version_status
-                st2 = qq_version_status(napcat_dir=self.napcat_dir, deep=False)
-                if st2.get('supported'):
-                    return ''
-            except Exception:
-                pass
+        if auto_update:
+            update_ok, update_err = self._try_update_kernel_detail(ver)
+            if update_ok:
+                try:
+                    from .qqversion import qq_version_status
+                    st2 = qq_version_status(napcat_dir=self.napcat_dir, deep=False)
+                    if st2.get('supported'):
+                        return ''
+                except Exception:
+                    pass
 
-        # 自动更新也解决不了 → 给出可执行的解决路径
         max_now = ''
         try:
             from .qqversion import supported_versions
@@ -1035,20 +1088,34 @@ class NapCatService:
         except Exception:
             pass
 
-        head = (f'QQ {ver} 不在 NapCat 支持列表内'
-                + (f'（当前内核支持最高 {max_now}）' if max_now else ''))
+        head = (f'QQ {ver} 不在当前 NapCat 内核的支持列表内'
+                + (f'（该内核支持最高 {max_now}）' if max_now else ''))
 
+        # ---- 情况 C：内核没更新成功，问题不在 QQ 版本 ----
+        if auto_update and not update_ok:
+            return (f'{head}\n\n'
+                    f'[!] 程序尝试自动更新 NapCat 内核，但【更新本身失败了】，\n'
+                    f'所以还没能测试新内核是否支持你的 QQ。\n\n'
+                    f'失败原因：\n  {update_err or "未知"}\n\n'
+                    f'这通常是网络问题（连不上 GitHub / SSL 证书 / 代理），\n'
+                    f'不代表你的 QQ 版本有问题。\n\n'
+                    f'解决办法：\n'
+                    f'  1. 检查网络后，到「设置」页点「更新 NapCat 内核」重试\n'
+                    f'  2. 或手动下载内核解压覆盖 napcat_green 目录：\n'
+                    f'     https://github.com/NapNeko/NapCatQQ/releases/latest\n'
+                    f'     （下载 NapCat.Shell.zip，保留 napcat_green\\config 目录）\n'
+                    f'  3. 更新成功后重新点「启动服务」')
+
+        # ---- 情况 B：内核已最新，仍不支持 ----
         return (f'{head}\n\n'
-                f'程序已自动尝试从 NapCat 官方下载最新内核，但仍不支持你这个版本。\n'
-                f'这通常说明你的 QQ 是测试版/内部渠道版：\n'
-                f'  官方 QQ 的 build 号一般在 2 万 ~ 6 万之间，\n'
-                f'  而你这个是 {build_of(ver)}，不在这个范围。\n\n'
+                f'程序已把 NapCat 内核更新到最新版，但最新内核也还没有适配你这个 QQ 版本。\n'
+                f'（QQ {ver} 比该内核支持的最高版本 {max_now or "未知"} 更新）\n\n'
                 f'解决办法（任选其一）：\n'
-                f'  1. 换成官方正式版 QQ {max_now or "（当前内核支持的最高版本）"}\n'
-                f'     下载：https://im.qq.com/pcqq/index.shtml\n'
-                f'  2. 如果你有支持该版本的 NapCat 内核，手动解压覆盖 napcat_green 目录\n'
-                f'  3. 如果 NapCat 后续适配了该版本，在「设置」页点「更新 NapCat 内核」\n\n'
-                f'（如果 QQ 已经弹出「文件已损坏」，那是注入失败导致的，'
+                f'  1. 等 NapCat 官方适配后，到「设置」页点「更新 NapCat 内核」\n'
+                f'  2. 暂时换用官方正式版 QQ {max_now or "（内核支持的最高版本）"}\n'
+                f'     https://im.qq.com/pcqq/index.shtml\n'
+                f'  3. 如果你有支持该版本的 NapCat 内核，手动解压覆盖 napcat_green 目录\n\n'
+                f'（如果 QQ 已弹出「文件已损坏」，那是注入失败导致的，'
                 f'QQ 本身没坏，不用重装。）')
 
     def _diagnose_boot_timeout(self, boot_timeout: float) -> str:
